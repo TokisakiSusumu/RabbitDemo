@@ -1,7 +1,5 @@
 using BlazorAppAuto.Client.Pages;
 using BlazorAppAuto.Components;
-using BlazorAppAuto.Hubs;
-using BlazorAppAuto.Services;
 using MassTransit;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,27 +8,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()
     .AddInteractiveWebAssemblyComponents();
-builder.Services.AddSignalR();
-builder.Services.AddMassTransit(x =>
-{
-    x.AddConsumer<NotificationConsumer>();
-
-    x.UsingRabbitMq((context, cfg) =>
-    {
-        cfg.Host("localhost", "/", h =>
-        {
-            h.Username("guest");
-            h.Password("guest");
-        });
-
-        cfg.ReceiveEndpoint($"notifications-{Guid.NewGuid():N}", e =>
-        {
-            e.AutoDelete = true;
-            e.Durable = false;
-            e.ConfigureConsumer<NotificationConsumer>(context);
-        });
-    });
-});
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -54,5 +31,4 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .AddInteractiveWebAssemblyRenderMode()
     .AddAdditionalAssemblies(typeof(BlazorAppAuto.Client._Imports).Assembly);
-app.MapHub<NotificationHub>("/notificationhub");
 app.Run();

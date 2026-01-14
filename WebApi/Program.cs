@@ -16,7 +16,7 @@ var app = builder.Build();
 
 app.MapPost("/notify", async (IPublishEndpoint publisher, NotificationRequest req) =>
 {
-    await publisher.Publish(new NotificationMessage(
+    await publisher.Publish(new WarehouseBookingDTO(
         req.Content,
         DateTime.UtcNow,
         req.Payload,

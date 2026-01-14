@@ -1,6 +1,6 @@
 namespace Shared;
 
-public record NotificationMessage(
+public record WarehouseBookingDTO(
     string Content,
     DateTime Timestamp,
     MessagePayload? Payload = null,

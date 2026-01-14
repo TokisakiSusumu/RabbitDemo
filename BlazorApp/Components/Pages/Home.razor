@@ -1,0 +1,38 @@
+@page "/"
+@using BlazorApp.Services
+@inject NotificationService NotificationService
+@implements IDisposable
+@rendermode InteractiveServer
+
+<h3>Live Notifications</h3>
+
+@if (!NotificationService.Messages.Any())
+{
+    <p>Waiting for messages...</p>
+}
+else
+{
+    @foreach (var msg in NotificationService.Messages)
+    {
+        <div style="padding:10px; margin:5px 0; background:#f0f0f0; border-radius:5px;">
+            <strong>@msg.Timestamp.ToLocalTime().ToString("HH:mm:ss")</strong>: @msg.Content
+        </div>
+    }
+}
+
+@code {
+    protected override void OnInitialized()
+    {
+        NotificationService.OnChange += OnNotificationReceived;
+    }
+
+    private void OnNotificationReceived()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        NotificationService.OnChange -= OnNotificationReceived;
+    }
+}

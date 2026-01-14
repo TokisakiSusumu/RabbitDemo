@@ -5,24 +5,30 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddMassTransit(x =>
 {
-    x.UsingRabbitMq((context, cfg) =>
+    x.UsingRabbitMq((_, cfg) => cfg.Host("localhost", "/", h =>
     {
-        cfg.Host("localhost", "/", h =>
-        {
-            h.Username("guest");
-            h.Password("guest");
-        });
-    });
+        h.Username("guest");
+        h.Password("guest");
+    }));
 });
 
 var app = builder.Build();
 
-app.MapPost("/notify", async (IPublishEndpoint publisher, NotificationRequest request) =>
+app.MapPost("/notify", async (IPublishEndpoint publisher, NotificationRequest req) =>
 {
-    await publisher.Publish(new NotificationMessage(request.Content, DateTime.UtcNow));
+    await publisher.Publish(new NotificationMessage(
+        req.Content,
+        DateTime.UtcNow,
+        req.Payload,
+        req.Tags
+    ));
     return Results.Ok("Published");
 });
 
 app.Run();
 
-public record NotificationRequest(string Content);
+public record NotificationRequest(
+    string Content,
+    MessagePayload? Payload = null,
+    List<string>? Tags = null
+);

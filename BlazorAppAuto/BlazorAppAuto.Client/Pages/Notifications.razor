@@ -1,0 +1,53 @@
+﻿@page "/notifications"
+@rendermode InteractiveAuto
+@using Microsoft.AspNetCore.SignalR.Client
+@using Shared
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<PageTitle>Notifications</PageTitle>
+
+<h1>RabbitMQ Messages</h1>
+
+@if (_messages.Count == 0)
+{
+    <p><em>Waiting for messages...</em></p>
+}
+else
+{
+    <ul>
+        @foreach (var msg in _messages)
+        {
+            <li>[@msg.Timestamp.ToLocalTime():HH:mm:ss] @msg.Content</li>
+        }
+    </ul>
+}
+
+@code {
+    private HubConnection? _hubConnection;
+    private readonly List<WarehouseBookingDTO> _messages = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var hubUrl = Navigation.ToAbsoluteUri("/notificationhub");
+
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(hubUrl)
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<WarehouseBookingDTO>("ReceiveMessage", msg =>
+        {
+            _messages.Insert(0, msg);
+            InvokeAsync(StateHasChanged);
+        });
+
+        await _hubConnection.StartAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+            await _hubConnection.DisposeAsync();
+    }
+}

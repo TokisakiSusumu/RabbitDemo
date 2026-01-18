@@ -1,0 +1,68 @@
+﻿@page "/notifications"
+@rendermode InteractiveWebAssembly
+@using Shared
+@inject INotificationSubscriber NotificationSubscriber
+@implements IAsyncDisposable
+
+<PageTitle>Notifications</PageTitle>
+
+<h1>RabbitMQ Messages</h1>
+
+<p><strong>Render Mode:</strong> @_renderMode</p>
+<p><strong>Status:</strong> @_status</p>
+
+@if (_messages.Count == 0)
+{
+    <p><em>Waiting for messages...</em></p>
+}
+else
+{
+    <ul>
+        @foreach (var msg in _messages)
+        {
+            <li>[@msg.Timestamp.ToLocalTime():HH:mm:ss] @msg.Content</li>
+        }
+    </ul>
+}
+
+@code {
+    private readonly List<WarehouseBookingDTO> _messages = [];
+    private string _renderMode = "Prerendering";
+    private string _status = "Initializing...";
+    private bool _started;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_started)
+        {
+            _started = true;
+            _renderMode = OperatingSystem.IsBrowser() ? "WebAssembly" : "Server";
+
+            NotificationSubscriber.OnMessageReceived += HandleMessage;
+
+            try
+            {
+                await NotificationSubscriber.StartAsync();
+                _status = "Connected";
+            }
+            catch (Exception ex)
+            {
+                _status = $"Error: {ex.Message}";
+            }
+
+            StateHasChanged();
+        }
+    }
+
+    private void HandleMessage(WarehouseBookingDTO message)
+    {
+        _messages.Insert(0, message);
+        InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        NotificationSubscriber.OnMessageReceived -= HandleMessage;
+        await NotificationSubscriber.DisposeAsync();
+    }
+}

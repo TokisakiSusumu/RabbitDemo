@@ -1,0 +1,49 @@
+﻿@page "/profile"
+@rendermode InteractiveServer
+@using Shared.Auth
+@inject IAuthService AuthService
+
+<PageTitle>Profile</PageTitle>
+
+<h1>Profile</h1>
+
+<AuthorizeView>
+    <Authorized>
+        @if (_userInfo != null)
+        {
+            <div class="card" style="max-width: 400px;">
+                <div class="card-body">
+                    <h5 class="card-title">@_userInfo.FirstName @_userInfo.LastName</h5>
+                    <p class="card-text"><strong>Email:</strong> @_userInfo.Email</p>
+                    <p class="card-text"><strong>Roles:</strong> @string.Join(", ", _userInfo.Roles)</p>
+                </div>
+            </div>
+        }
+        else if (_isLoading)
+        {
+            <p>Loading profile...</p>
+        }
+        else
+        {
+            <p>Unable to load profile.</p>
+        }
+    </Authorized>
+    <NotAuthorized>
+        <p>Please <a href="login">login</a> to view your profile.</p>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private UserInfo? _userInfo;
+    private bool _isLoading = true;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _userInfo = await AuthService.GetCurrentUserAsync();
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+}

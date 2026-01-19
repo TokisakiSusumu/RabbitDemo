@@ -1,0 +1,125 @@
+﻿@page "/register"
+@rendermode InteractiveServer
+@using Shared.Auth
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+
+<PageTitle>Register</PageTitle>
+
+<h1>Register</h1>
+
+<div class="row">
+    <div class="col-md-4">
+        <EditForm Model="@_registerModel" OnValidSubmit="HandleRegister" FormName="register">
+            <DataAnnotationsValidator />
+
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <div class="alert alert-danger">@_errorMessage</div>
+            }
+
+            @if (!string.IsNullOrEmpty(_successMessage))
+            {
+                <div class="alert alert-success">@_successMessage</div>
+            }
+
+            <div class="mb-3">
+                <label class="form-label">First Name</label>
+                <InputText @bind-Value="_registerModel.FirstName" class="form-control" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Last Name</label>
+                <InputText @bind-Value="_registerModel.LastName" class="form-control" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <InputText @bind-Value="_registerModel.Email" class="form-control" />
+                <ValidationMessage For="@(() => _registerModel.Email)" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <InputText @bind-Value="_registerModel.Password" type="password" class="form-control" />
+                <ValidationMessage For="@(() => _registerModel.Password)" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Confirm Password</label>
+                <InputText @bind-Value="_registerModel.ConfirmPassword" type="password" class="form-control" />
+            </div>
+
+            <button type="submit" class="btn btn-primary" disabled="@_isLoading">
+                @if (_isLoading)
+                {
+                    <span>Registering...</span>
+                }
+                else
+                {
+                    <span>Register</span>
+                }
+            </button>
+        </EditForm>
+
+        <p class="mt-3">
+            Already have an account? <a href="login">Login here</a>
+        </p>
+    </div>
+</div>
+
+@code {
+    private RegisterModel _registerModel = new();
+    private string? _errorMessage;
+    private string? _successMessage;
+    private bool _isLoading;
+
+    private async Task HandleRegister()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        _successMessage = null;
+
+        if (_registerModel.Password != _registerModel.ConfirmPassword)
+        {
+            _errorMessage = "Passwords do not match";
+            _isLoading = false;
+            return;
+        }
+
+        try
+        {
+            var response = await AuthService.RegisterAsync(new RegisterRequest
+            {
+                Email = _registerModel.Email,
+                Password = _registerModel.Password,
+                FirstName = _registerModel.FirstName,
+                LastName = _registerModel.LastName
+            });
+
+            if (response.Success)
+            {
+                _successMessage = "Registration successful! Redirecting to login...";
+                await Task.Delay(1500);
+                Navigation.NavigateTo("/login");
+            }
+            else
+            {
+                _errorMessage = string.Join(", ", response.Errors);
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private class RegisterModel
+    {
+        public string Email { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public string ConfirmPassword { get; set; } = string.Empty;
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+    }
+}

@@ -2,6 +2,7 @@ using BlazorApp1.Components;
 using BlazorApp1.Hubs;
 using BlazorApp1.Services;
 using MassTransit;
+using Microsoft.AspNetCore.Components.Authorization;
 using Shared;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -12,10 +13,21 @@ builder.Services.AddRazorComponents()
         options.DetailedErrors = true;
     })
     .AddInteractiveWebAssemblyComponents();
+
 builder.Services.AddSignalR();
+
+// Existing services
 builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddScoped<INotificationSubscriber, ServerNotificationSubscriber>();
 
+// Auth services
+builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri("http://localhost:5100") });
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
+builder.Services.AddCascadingAuthenticationState();  // <-- ADD THIS LINE
+builder.Services.AddAuthorizationCore();
+
+// MassTransit (existing)
 builder.Services.AddMassTransit(x =>
 {
     x.AddConsumer<WarehouseBookingConsumer>();

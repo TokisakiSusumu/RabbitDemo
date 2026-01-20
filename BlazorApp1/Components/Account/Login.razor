@@ -6,6 +6,10 @@
 
 <div class="row">
     <div class="col-md-4">
+        @if (!string.IsNullOrEmpty(Message))
+        {
+            <div class="alert alert-success">@Message</div>
+        }
         @if (!string.IsNullOrEmpty(Error))
         {
             <div class="alert alert-danger">@Error</div>
@@ -35,11 +39,12 @@
 </div>
 
 @code {
-
     [SupplyParameterFromQuery]
-
-    private string? ReturnUrl { get; set; } = null;
+    private string? ReturnUrl { get; set; }
 
     [SupplyParameterFromQuery]
     private string? Error { get; set; }
+
+    [SupplyParameterFromQuery]
+    private string? Message { get; set; }
 }

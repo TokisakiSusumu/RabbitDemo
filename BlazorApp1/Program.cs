@@ -96,7 +96,30 @@ app.MapPost("/Account/Login", async (
 
     return Results.Redirect($"/Account/Login?error=Invalid+credentials&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
 });
+app.MapPost("/Account/Register", async (
+    IHttpClientFactory httpClientFactory,
+    [FromForm] string email,
+    [FromForm] string password,
+    [FromForm] string? firstName,
+    [FromForm] string? lastName) =>
+{
+    var client = httpClientFactory.CreateClient("WebApi");
+    var response = await client.PostAsJsonAsync("api/auth/register", new { email, password, firstName, lastName });
 
+    if (response.IsSuccessStatusCode)
+    {
+        var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
+        if (result?.Success == true)
+        {
+            return Results.Redirect("/Account/Login?message=Registration+successful");
+        }
+
+        var errors = string.Join(", ", result?.Errors ?? ["Registration failed"]);
+        return Results.Redirect($"/Account/Register?error={Uri.EscapeDataString(errors)}");
+    }
+
+    return Results.Redirect("/Account/Register?error=Registration+failed");
+});
 app.MapPost("/Account/Logout", async (HttpContext context) =>
 {
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);

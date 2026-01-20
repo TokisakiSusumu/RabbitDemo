@@ -1,7 +1,11 @@
 using BlazorApp1.Components;
 using BlazorApp1.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Shared.Auth;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -59,5 +63,43 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .AddInteractiveWebAssemblyRenderMode()
     .AddAdditionalAssemblies(typeof(BlazorApp1.Client._Imports).Assembly);
+app.MapPost("/Account/Login", async (
+    HttpContext context,
+    IHttpClientFactory httpClientFactory,
+    [FromForm] string email,
+    [FromForm] string password,
+    [FromForm] string? returnUrl = null) =>
+{
+    var client = httpClientFactory.CreateClient("WebApi");
+    var response = await client.PostAsJsonAsync("api/auth/login", new { email, password });
 
+    if (response.IsSuccessStatusCode)
+    {
+        var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
+        if (result?.Success == true)
+        {
+            var claims = new List<Claim>
+            {
+                new(ClaimTypes.Name, result.Email!),
+                new(ClaimTypes.Email, result.Email!)
+            };
+            claims.AddRange(result.Roles.Select(r => new Claim(ClaimTypes.Role, r)));
+
+            await context.SignInAsync(
+                CookieAuthenticationDefaults.AuthenticationScheme,
+                new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)),
+                new AuthenticationProperties { IsPersistent = true });
+
+            return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl ?? "/");
+        }
+    }
+
+    return Results.Redirect($"/Account/Login?error=Invalid+credentials&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
+});
+
+app.MapPost("/Account/Logout", async (HttpContext context) =>
+{
+    await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Redirect("/");
+});
 app.Run();

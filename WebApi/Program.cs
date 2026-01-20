@@ -1,16 +1,13 @@
 using System.Text;
-using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Shared;
 using WebApi.Configuration;
 using WebApi.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add controllers
 builder.Services.AddControllers();
 
 // Database
@@ -66,16 +63,6 @@ builder.Services.AddCors(options =>
     });
 });
 
-// MassTransit (existing)
-builder.Services.AddMassTransit(x =>
-{
-    x.UsingRabbitMq((_, cfg) => cfg.Host("localhost", "/", h =>
-    {
-        h.Username("guest");
-        h.Password("guest");
-    }));
-});
-
 var app = builder.Build();
 
 // Seed roles
@@ -96,27 +83,6 @@ using (var scope = app.Services.CreateScope())
 app.UseCors("BlazorApp");
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
-// Existing notify endpoint (now requires auth)
-app.MapPost("/notify", async (IPublishEndpoint publisher, NotificationRequest req) =>
-{
-    await publisher.Publish(new WarehouseBookingDTO
-    {
-        Content = req.Content,
-        Timestamp = DateTime.UtcNow,
-        Payload = req.Payload,
-        Tags = req.Tags
-    });
-    return Results.Ok("Published");
-}).RequireAuthorization();
-
 app.Run();
-
-public record NotificationRequest
-{
-    public string Content { get; init; } = string.Empty;
-    public MessagePayload? Payload { get; init; }
-    public List<string>? Tags { get; init; }
-}

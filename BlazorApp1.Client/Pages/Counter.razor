@@ -1,0 +1,55 @@
+@page "/counter"
+@rendermode InteractiveAuto
+
+@* 
+    Counter - Uses InteractiveAuto render mode
+    
+    HOW IT WORKS:
+    - First visit: Renders on Server (fast, while WASM downloads in background)
+    - Subsequent visits: Renders in WASM (from cache)
+    
+    AUTH WORKS IN BOTH MODES because:
+    - Server mode: Reads auth from cookie
+    - WASM mode: Reads auth from PersistentComponentState
+*@
+
+<PageTitle>Counter</PageTitle>
+
+<h1>Counter</h1>
+
+<p>This page uses <strong>InteractiveAuto</strong> render mode.</p>
+<p>Current render location: <strong>@_renderLocation</strong></p>
+
+<p role="status">Current count: @_currentCount</p>
+
+<button class="btn btn-primary" @onclick="IncrementCount">Click me</button>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="alert alert-success mt-3">
+            <strong>Authenticated!</strong> Welcome, @context.User.Identity?.Name
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <div class="alert alert-warning mt-3">
+            <strong>Not authenticated.</strong> <a href="Account/Login">Login</a> to see personalized content.
+        </div>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private int _currentCount = 0;
+    private string _renderLocation = "Unknown";
+
+    protected override void OnInitialized()
+    {
+        _renderLocation = OperatingSystem.IsBrowser() ? "WebAssembly" : "Server";
+        Console.WriteLine($">>> [{_renderLocation.ToUpper()}] Counter.OnInitialized: Page loaded in {_renderLocation} mode");
+    }
+
+    private void IncrementCount()
+    {
+        _currentCount++;
+        Console.WriteLine($">>> [{_renderLocation.ToUpper()}] Counter.IncrementCount: Count = {_currentCount}");
+    }
+}

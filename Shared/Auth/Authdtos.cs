@@ -1,4 +1,4 @@
-﻿namespace Shared.Auth;
+namespace Shared.Auth;
 
 public record RegisterRequest
 {
@@ -18,7 +18,6 @@ public record AuthResponse
 {
     public bool Success { get; init; }
     public string? Token { get; init; }
-    public string? RefreshToken { get; init; }
     public DateTime? Expiration { get; init; }
     public string? Email { get; init; }
     public List<string> Roles { get; init; } = [];

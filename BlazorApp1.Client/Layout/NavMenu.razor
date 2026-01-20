@@ -1,0 +1,99 @@
+@* 
+    NavMenu - Runs in WebAssembly (browser)
+    
+    WHY WASM? 
+    - No constant SignalR connection needed
+    - Works even when internet connection is temporarily lost
+    - Auth state is read from PersistentComponentState (already in browser)
+    
+    If this was InteractiveServer:
+    - Would need constant SignalR connection
+    - Would show "Attempting to reconnect..." when internet lost
+    - Page would become unusable
+*@
+
+@inject AuthenticationStateProvider AuthStateProvider
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">BlazorApp1</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="counter">
+                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="weather">
+                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
+            </NavLink>
+        </div>
+
+        @* Auth-dependent menu items *@
+        <AuthorizeView>
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="profile">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Profile
+                    </NavLink>
+                </div>
+
+                <AuthorizeView Roles="Admin">
+                    <Authorized Context="myContext">
+                        <div class="nav-item px-3">
+                            <NavLink class="nav-link" href="admin">
+                                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Admin
+                            </NavLink>
+                        </div>
+                    </Authorized>
+                </AuthorizeView>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="Account/Logout">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Logout (@context.User.Identity?.Name)
+                    </NavLink>
+                </div>
+            </Authorized>
+            <NotAuthorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="Account/Login">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Login
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="Account/Register">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Register
+                    </NavLink>
+                </div>
+            </NotAuthorized>
+        </AuthorizeView>
+    </nav>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Console.WriteLine(">>> [WASM] NavMenu.OnInitialized: NavMenu initialized in WebAssembly");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Console.WriteLine(">>> [WASM] NavMenu.OnInitializedAsync: Getting auth state...");
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        Console.WriteLine($">>> [WASM] NavMenu.OnInitializedAsync: IsAuthenticated={user.Identity?.IsAuthenticated}, Name={user.Identity?.Name}");
+    }
+}

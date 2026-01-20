@@ -1,0 +1,133 @@
+@page "/Account/Register"
+@using Shared.Auth
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+
+<PageTitle>Register</PageTitle>
+
+<h1>Register</h1>
+
+<div class="row">
+    <div class="col-md-4">
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert alert-danger">@_error</div>
+        }
+        @if (!string.IsNullOrEmpty(_success))
+        {
+            <div class="alert alert-success">@_success</div>
+        }
+
+        <EditForm Model="_model" OnValidSubmit="HandleRegister" FormName="register">
+            <DataAnnotationsValidator />
+            
+            <div class="mb-3">
+                <label class="form-label">First Name</label>
+                <InputText @bind-Value="_model.FirstName" class="form-control" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Last Name</label>
+                <InputText @bind-Value="_model.LastName" class="form-control" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <InputText @bind-Value="_model.Email" class="form-control" />
+                <ValidationMessage For="() => _model.Email" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <InputText @bind-Value="_model.Password" type="password" class="form-control" />
+                <small class="text-muted">Min 6 chars, uppercase, lowercase, digit</small>
+                <ValidationMessage For="() => _model.Password" />
+            </div>
+
+            <button type="submit" class="btn btn-primary" disabled="@_loading">
+                @if (_loading)
+                {
+                    <span class="spinner-border spinner-border-sm me-2"></span>
+                }
+                Register
+            </button>
+        </EditForm>
+
+        <p class="mt-3">
+            Already have an account? <a href="Account/Login">Login here</a>
+        </p>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromForm]
+    private RegisterModel _model { get; set; } = new();
+
+    private string? _error;
+    private string? _success;
+    private bool _loading;
+
+    protected override void OnInitialized()
+    {
+        Console.WriteLine(">>> [SERVER] Register.OnInitialized: Page loaded");
+    }
+
+    private async Task HandleRegister()
+    {
+        Console.WriteLine($">>> [SERVER] Register.HandleRegister: Registering {_model.Email}");
+        
+        _loading = true;
+        _error = null;
+        _success = null;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("WebApi");
+            Console.WriteLine(">>> [SERVER] Register.HandleRegister: Calling WebApi /api/auth/register");
+            
+            var response = await client.PostAsJsonAsync("api/auth/register", new RegisterRequest
+            {
+                Email = _model.Email,
+                Password = _model.Password,
+                FirstName = _model.FirstName,
+                LastName = _model.LastName
+            });
+
+            Console.WriteLine($">>> [SERVER] Register.HandleRegister: Response status = {response.StatusCode}");
+
+            var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
+
+            if (result?.Success == true)
+            {
+                Console.WriteLine(">>> [SERVER] Register.HandleRegister: Success! Redirecting to login...");
+                _success = "Registration successful! Redirecting to login...";
+                StateHasChanged();
+                
+                await Task.Delay(1500);
+                Navigation.NavigateTo("/Account/Login", forceLoad: true);
+            }
+            else
+            {
+                _error = string.Join(", ", result?.Errors ?? ["Registration failed"]);
+                Console.WriteLine($">>> [SERVER] Register.HandleRegister: Failed - {_error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Error: {ex.Message}";
+            Console.WriteLine($">>> [SERVER] Register.HandleRegister: Exception - {ex.Message}");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private class RegisterModel
+    {
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+    }
+}

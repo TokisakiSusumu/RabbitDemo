@@ -1,0 +1,47 @@
+@page "/profile"
+@rendermode InteractiveAuto
+@attribute [Authorize]
+
+@* 
+    Profile - Protected page (requires login)
+    Uses InteractiveAuto, works in both Server and WASM modes
+*@
+
+<PageTitle>Profile</PageTitle>
+
+<h1>Profile</h1>
+
+<p>This is a <strong>protected page</strong> - requires authentication.</p>
+<p>Current render location: <strong>@_renderLocation</strong></p>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="card" style="max-width: 400px;">
+            <div class="card-header">
+                <strong>User Information</strong>
+            </div>
+            <div class="card-body">
+                <p><strong>Name:</strong> @context.User.Identity?.Name</p>
+                <p><strong>Authenticated:</strong> @context.User.Identity?.IsAuthenticated</p>
+                <p><strong>Auth Type:</strong> @context.User.Identity?.AuthenticationType</p>
+                <p><strong>Roles:</strong></p>
+                <ul>
+                    @foreach (var claim in context.User.Claims.Where(c => c.Type.Contains("role")))
+                    {
+                        <li>@claim.Value</li>
+                    }
+                </ul>
+            </div>
+        </div>
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    private string _renderLocation = "Unknown";
+
+    protected override void OnInitialized()
+    {
+        _renderLocation = OperatingSystem.IsBrowser() ? "WebAssembly" : "Server";
+        Console.WriteLine($">>> [{_renderLocation.ToUpper()}] Profile.OnInitialized: Protected page loaded in {_renderLocation} mode");
+    }
+}

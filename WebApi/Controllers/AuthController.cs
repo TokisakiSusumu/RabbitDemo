@@ -1,6 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -32,7 +31,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
-    public async Task<ActionResult<AuthResponse>> Register([FromBody] Shared.Auth.RegisterRequest request)
+    public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request)
     {
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
         if (existingUser != null)
@@ -74,7 +73,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
-    public async Task<ActionResult<AuthResponse>> Login([FromBody] Shared.Auth.LoginRequest request)
+    public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user == null)
@@ -154,6 +153,7 @@ public class AuthController : ControllerBase
         {
             new(ClaimTypes.NameIdentifier, user.Id),
             new(ClaimTypes.Email, user.Email!),
+            new(ClaimTypes.Name, user.Email!),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 

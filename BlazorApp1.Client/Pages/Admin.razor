@@ -1,0 +1,45 @@
+@page "/admin"
+@rendermode InteractiveAuto
+@attribute [Authorize(Roles = "Admin")]
+
+@* 
+    Admin - Role-protected page (requires Admin role)
+    Uses InteractiveAuto, works in both Server and WASM modes
+*@
+
+<PageTitle>Admin</PageTitle>
+
+<h1>Admin Dashboard</h1>
+
+<p>This page requires the <strong>Admin</strong> role.</p>
+<p>Current render location: <strong>@_renderLocation</strong></p>
+
+<AuthorizeView Roles="Admin">
+    <Authorized>
+        <div class="alert alert-success">
+            <strong>Welcome, Admin!</strong> You have full administrative access.
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header">Admin Functions</div>
+            <div class="card-body">
+                <p>This content is only visible to users with the Admin role.</p>
+                <ul>
+                    <li>Manage users</li>
+                    <li>View system logs</li>
+                    <li>Configure settings</li>
+                </ul>
+            </div>
+        </div>
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    private string _renderLocation = "Unknown";
+
+    protected override void OnInitialized()
+    {
+        _renderLocation = OperatingSystem.IsBrowser() ? "WebAssembly" : "Server";
+        Console.WriteLine($">>> [{_renderLocation.ToUpper()}] Admin.OnInitialized: Admin page loaded in {_renderLocation} mode");
+    }
+}

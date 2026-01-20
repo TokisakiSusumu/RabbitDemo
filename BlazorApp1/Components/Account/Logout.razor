@@ -1,0 +1,27 @@
+@page "/Account/Logout"
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Authentication.Cookies
+@inject IHttpContextAccessor HttpContextAccessor
+@inject NavigationManager Navigation
+
+<PageTitle>Logout</PageTitle>
+
+<h1>Logging out...</h1>
+<p>Please wait...</p>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        Console.WriteLine(">>> [SERVER] Logout.OnInitializedAsync: Logging out...");
+        
+        var httpContext = HttpContextAccessor.HttpContext;
+        if (httpContext != null)
+        {
+            await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            Console.WriteLine(">>> [SERVER] Logout.OnInitializedAsync: Cookie cleared");
+        }
+
+        Console.WriteLine(">>> [SERVER] Logout.OnInitializedAsync: Redirecting to home...");
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+}

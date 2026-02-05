@@ -1,14 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 using Shared.Auth;
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Text;
-using WebApi.Configuration;
 using WebApi.Data;
+using WebApi.Services;
 
 namespace WebApi.Controllers;
 
@@ -18,24 +14,27 @@ public class AuthController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
-    private readonly JwtSettings _jwtSettings;
+    private readonly ITokenService _tokenService;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
-        IOptions<JwtSettings> jwtSettings)
+        ITokenService tokenService)
     {
         _userManager = userManager;
         _signInManager = signInManager;
-        _jwtSettings = jwtSettings.Value;
+        _tokenService = tokenService;
     }
 
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request)
     {
+        Console.WriteLine($">>> [WEBAPI] Register: Attempting to register {request.Email}");
+
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
         if (existingUser != null)
         {
+            Console.WriteLine($">>> [WEBAPI] Register: Email already exists");
             return BadRequest(new AuthResponse
             {
                 Success = false,
@@ -55,6 +54,7 @@ public class AuthController : ControllerBase
 
         if (!result.Succeeded)
         {
+            Console.WriteLine($">>> [WEBAPI] Register: Failed - {string.Join(", ", result.Errors.Select(e => e.Description))}");
             return BadRequest(new AuthResponse
             {
                 Success = false,
@@ -62,8 +62,8 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Assign default role
         await _userManager.AddToRoleAsync(user, "User");
+        Console.WriteLine($">>> [WEBAPI] Register: Success for {request.Email}");
 
         return Ok(new AuthResponse
         {
@@ -75,9 +75,12 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request)
     {
+        Console.WriteLine($">>> [WEBAPI] Login: Attempting login for {request.Email}");
+
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user == null)
         {
+            Console.WriteLine($">>> [WEBAPI] Login: User not found");
             return Unauthorized(new AuthResponse
             {
                 Success = false,
@@ -89,6 +92,7 @@ public class AuthController : ControllerBase
 
         if (!result.Succeeded)
         {
+            Console.WriteLine($">>> [WEBAPI] Login: Invalid password");
             return Unauthorized(new AuthResponse
             {
                 Success = false,
@@ -96,30 +100,94 @@ public class AuthController : ControllerBase
             });
         }
 
-        var token = await GenerateJwtToken(user);
+        // Generate both access token and refresh token
+        var (accessToken, refreshToken, accessExpiry, refreshExpiry) =
+            await _tokenService.GenerateTokensAsync(user);
+
         var roles = await _userManager.GetRolesAsync(user);
+
+        Console.WriteLine($">>> [WEBAPI] Login: Success - AccessToken expires {accessExpiry}, RefreshToken expires {refreshExpiry}");
 
         return Ok(new AuthResponse
         {
             Success = true,
-            Token = token,
-            Expiration = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpirationMinutes),
+            Token = accessToken,
+            RefreshToken = refreshToken,
+            Expiration = accessExpiry,
             Email = user.Email,
             Roles = roles.ToList()
         });
+    }
+
+    [HttpPost("refresh")]
+    public async Task<ActionResult<AuthResponse>> RefreshToken([FromBody] RefreshTokenRequest request)
+    {
+        Console.WriteLine($">>> [WEBAPI] RefreshToken: Attempting to refresh tokens");
+
+        var result = await _tokenService.RefreshTokensAsync(request.Token, request.RefreshToken);
+
+        if (result == null)
+        {
+            Console.WriteLine($">>> [WEBAPI] RefreshToken: Invalid or expired tokens");
+            return Unauthorized(new AuthResponse
+            {
+                Success = false,
+                Errors = ["Invalid or expired refresh token"]
+            });
+        }
+
+        var (accessToken, refreshToken, accessExpiry, refreshExpiry) = result.Value;
+
+        // Get user info from the new token
+        var principal = _tokenService.ValidateExpiredToken(accessToken);
+        var email = principal?.FindFirstValue(ClaimTypes.Email);
+        var roles = principal?.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList() ?? [];
+
+        Console.WriteLine($">>> [WEBAPI] RefreshToken: Success - New tokens generated");
+
+        return Ok(new AuthResponse
+        {
+            Success = true,
+            Token = accessToken,
+            RefreshToken = refreshToken,
+            Expiration = accessExpiry,
+            Email = email,
+            Roles = roles
+        });
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!string.IsNullOrEmpty(userId))
+        {
+            Console.WriteLine($">>> [WEBAPI] Logout: Revoking all refresh tokens for user {userId}");
+            await _tokenService.RevokeRefreshTokenAsync(userId);
+        }
+
+        return Ok(new { message = "Logged out successfully" });
     }
 
     [Authorize]
     [HttpGet("me")]
     public async Task<ActionResult<UserInfo>> GetCurrentUser()
     {
+        Console.WriteLine($">>> [WEBAPI] GetCurrentUser: Fetching user info");
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         var user = await _userManager.FindByIdAsync(userId!);
 
         if (user == null)
+        {
+            Console.WriteLine($">>> [WEBAPI] GetCurrentUser: User not found");
             return NotFound();
+        }
 
         var roles = await _userManager.GetRolesAsync(user);
+
+        Console.WriteLine($">>> [WEBAPI] GetCurrentUser: Found {user.Email} with roles: {string.Join(", ", roles)}");
 
         return Ok(new UserInfo
         {
@@ -134,6 +202,8 @@ public class AuthController : ControllerBase
     [HttpPost("assign-role")]
     public async Task<IActionResult> AssignRole([FromBody] AssignRoleRequest request)
     {
+        Console.WriteLine($">>> [WEBAPI] AssignRole: Assigning {request.Role} to {request.Email}");
+
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user == null)
             return NotFound("User not found");
@@ -143,34 +213,6 @@ public class AuthController : ControllerBase
             return BadRequest(result.Errors);
 
         return Ok($"Role '{request.Role}' assigned to {request.Email}");
-    }
-
-    private async Task<string> GenerateJwtToken(ApplicationUser user)
-    {
-        var roles = await _userManager.GetRolesAsync(user);
-
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.NameIdentifier, user.Id),
-            new(ClaimTypes.Email, user.Email!),
-            new(ClaimTypes.Name, user.Email!),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        };
-
-        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Secret));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var token = new JwtSecurityToken(
-            issuer: _jwtSettings.Issuer,
-            audience: _jwtSettings.Audience,
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(_jwtSettings.ExpirationMinutes),
-            signingCredentials: creds
-        );
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }
 

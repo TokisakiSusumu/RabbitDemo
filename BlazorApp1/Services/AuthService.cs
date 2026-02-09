@@ -13,6 +13,22 @@ public interface IAuthService
     Task<TResponse?> PostAsync<TRequest, TResponse>(string endpoint, TRequest data);
     Task<bool> IsTokenExpiringSoonAsync();
     Task<bool> RefreshTokenIfNeededAsync();
+    TokenStatus GetTokenStatus();
+}
+
+/// <summary>
+/// Token status for debugging
+/// </summary>
+public class TokenStatus
+{
+    public bool HasTokenData { get; set; }
+    public DateTime? AccessTokenExpiry { get; set; }
+    public DateTime? RefreshTokenExpiry { get; set; }
+    public bool IsAccessTokenExpired { get; set; }
+    public bool IsAccessTokenExpiringSoon { get; set; }
+    public bool IsRefreshTokenExpired { get; set; }
+    public TimeSpan? TimeUntilAccessExpiry { get; set; }
+    public TimeSpan? TimeUntilRefreshExpiry { get; set; }
 }
 
 /// <summary>
@@ -25,8 +41,8 @@ public class AuthService : IAuthService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<AuthService> _logger;
 
-    // Buffer time before token expiry to trigger refresh (5 minutes)
-    private static readonly TimeSpan TokenRefreshBuffer = TimeSpan.FromMinutes(5);
+    // Buffer time before token expiry to trigger refresh (30 seconds for testing, normally 5 minutes)
+    private static readonly TimeSpan TokenRefreshBuffer = TimeSpan.FromSeconds(30);
 
     public AuthService(
         IHttpClientFactory httpClientFactory,
@@ -36,89 +52,146 @@ public class AuthService : IAuthService
         _httpClientFactory = httpClientFactory;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
+
+        Console.WriteLine($">>> [BLAZOR] AuthService: Initialized with RefreshBuffer={TokenRefreshBuffer.TotalSeconds} seconds");
+    }
+
+    public TokenStatus GetTokenStatus()
+    {
+        var tokenData = GetTokenDataFromCookie();
+        if (tokenData == null)
+        {
+            return new TokenStatus { HasTokenData = false };
+        }
+
+        var now = DateTime.UtcNow;
+        var timeUntilAccessExpiry = tokenData.AccessTokenExpiry - now;
+        var timeUntilRefreshExpiry = tokenData.RefreshTokenExpiry - now;
+
+        return new TokenStatus
+        {
+            HasTokenData = true,
+            AccessTokenExpiry = tokenData.AccessTokenExpiry,
+            RefreshTokenExpiry = tokenData.RefreshTokenExpiry,
+            IsAccessTokenExpired = tokenData.AccessTokenExpiry <= now,
+            IsAccessTokenExpiringSoon = timeUntilAccessExpiry <= TokenRefreshBuffer,
+            IsRefreshTokenExpired = tokenData.RefreshTokenExpiry <= now,
+            TimeUntilAccessExpiry = timeUntilAccessExpiry,
+            TimeUntilRefreshExpiry = timeUntilRefreshExpiry
+        };
     }
 
     public async Task<T?> GetAsync<T>(string endpoint)
     {
+        Console.WriteLine($"");
+        Console.WriteLine($"──────────────────────────────────────────────────────────────");
+        Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: START");
+        Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Endpoint = {endpoint}");
+        Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Current UTC time = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine($"──────────────────────────────────────────────────────────────");
+
         var client = await GetAuthenticatedClientAsync();
         if (client == null)
         {
-            _logger.LogWarning(">>> [SERVER] AuthService: No authenticated client available");
+            Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: FAILED - No authenticated client available");
             return default;
         }
 
         try
         {
+            Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Making HTTP GET request...");
             var response = await client.GetAsync(endpoint);
+            Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Response status = {(int)response.StatusCode} {response.StatusCode}");
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                _logger.LogWarning(">>> [SERVER] AuthService: 401 Unauthorized - token may be expired");
+                Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Got 401 - Token may be expired, attempting refresh...");
 
                 // Try to refresh token and retry
                 if (await RefreshTokenIfNeededAsync())
                 {
+                    Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Refresh successful, retrying request...");
                     client = await GetAuthenticatedClientAsync();
                     if (client != null)
                     {
                         response = await client.GetAsync(endpoint);
+                        Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Retry response status = {(int)response.StatusCode} {response.StatusCode}");
                     }
+                }
+                else
+                {
+                    Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: Refresh FAILED - User needs to re-login");
                 }
             }
 
             if (response.IsSuccessStatusCode)
             {
-                return await response.Content.ReadFromJsonAsync<T>();
+                var result = await response.Content.ReadFromJsonAsync<T>();
+                Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: SUCCESS - Data retrieved");
+                return result;
             }
 
-            _logger.LogError(">>> [SERVER] AuthService: API call failed with status {StatusCode}", response.StatusCode);
+            Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: FAILED - Status {response.StatusCode}");
             return default;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, ">>> [SERVER] AuthService: Exception during API call");
+            Console.WriteLine($">>> [BLAZOR] AuthService.GetAsync: EXCEPTION - {ex.Message}");
             return default;
         }
     }
 
     public async Task<TResponse?> PostAsync<TRequest, TResponse>(string endpoint, TRequest data)
     {
+        Console.WriteLine($"");
+        Console.WriteLine($"──────────────────────────────────────────────────────────────");
+        Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: START");
+        Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: Endpoint = {endpoint}");
+        Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: Current UTC time = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine($"──────────────────────────────────────────────────────────────");
+
         var client = await GetAuthenticatedClientAsync();
         if (client == null)
         {
-            _logger.LogWarning(">>> [SERVER] AuthService: No authenticated client available");
+            Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: FAILED - No authenticated client available");
             return default;
         }
 
         try
         {
+            Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: Making HTTP POST request...");
             var response = await client.PostAsJsonAsync(endpoint, data);
+            Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: Response status = {(int)response.StatusCode} {response.StatusCode}");
 
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                _logger.LogWarning(">>> [SERVER] AuthService: 401 Unauthorized - attempting token refresh");
+                Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: Got 401 - Attempting token refresh...");
 
                 if (await RefreshTokenIfNeededAsync())
                 {
+                    Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: Refresh successful, retrying request...");
                     client = await GetAuthenticatedClientAsync();
                     if (client != null)
                     {
                         response = await client.PostAsJsonAsync(endpoint, data);
+                        Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: Retry response status = {(int)response.StatusCode} {response.StatusCode}");
                     }
                 }
             }
 
             if (response.IsSuccessStatusCode)
             {
-                return await response.Content.ReadFromJsonAsync<TResponse>();
+                var result = await response.Content.ReadFromJsonAsync<TResponse>();
+                Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: SUCCESS");
+                return result;
             }
 
-            _logger.LogError(">>> [SERVER] AuthService: POST failed with status {StatusCode}", response.StatusCode);
+            Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: FAILED - Status {response.StatusCode}");
             return default;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, ">>> [SERVER] AuthService: Exception during POST");
+            Console.WriteLine($">>> [BLAZOR] AuthService.PostAsync: EXCEPTION - {ex.Message}");
             return default;
         }
     }
@@ -127,36 +200,55 @@ public class AuthService : IAuthService
     {
         var tokenData = GetTokenDataFromCookie();
         if (tokenData == null)
+        {
+            Console.WriteLine($">>> [BLAZOR] AuthService.IsTokenExpiringSoon: No token data");
             return false;
+        }
 
         var timeUntilExpiry = tokenData.AccessTokenExpiry - DateTime.UtcNow;
-        return timeUntilExpiry <= TokenRefreshBuffer;
+        var isExpiringSoon = timeUntilExpiry <= TokenRefreshBuffer;
+
+        Console.WriteLine($">>> [BLAZOR] AuthService.IsTokenExpiringSoon: Time until expiry = {timeUntilExpiry.TotalSeconds:F0} seconds, ExpiringSoon = {isExpiringSoon}");
+
+        return isExpiringSoon;
     }
 
     public async Task<bool> RefreshTokenIfNeededAsync()
     {
+        Console.WriteLine($"");
+        Console.WriteLine($"╔══════════════════════════════════════════════════════════════╗");
+        Console.WriteLine($"║ [BLAZOR] AuthService.RefreshTokenIfNeededAsync: START        ║");
+        Console.WriteLine($"╚══════════════════════════════════════════════════════════════╝");
+        Console.WriteLine($">>> [BLAZOR] Current UTC time = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+
         var httpContext = _httpContextAccessor.HttpContext;
         if (httpContext == null)
         {
-            _logger.LogWarning(">>> [SERVER] AuthService: No HttpContext available");
+            Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: FAILED - No HttpContext");
             return false;
         }
 
         var tokenData = GetTokenDataFromCookie();
         if (tokenData == null)
         {
-            _logger.LogWarning(">>> [SERVER] AuthService: No token data in cookie");
+            Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: FAILED - No token data in cookie");
             return false;
         }
+
+        Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: Token data found:");
+        Console.WriteLine($">>>   - AccessToken expires: {tokenData.AccessTokenExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - RefreshToken expires: {tokenData.RefreshTokenExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - Time until access expiry: {(tokenData.AccessTokenExpiry - DateTime.UtcNow).TotalSeconds:F0} seconds");
+        Console.WriteLine($">>>   - Time until refresh expiry: {(tokenData.RefreshTokenExpiry - DateTime.UtcNow).TotalDays:F2} days");
 
         // Check if refresh token itself is expired
         if (tokenData.RefreshTokenExpiry <= DateTime.UtcNow)
         {
-            _logger.LogWarning(">>> [SERVER] AuthService: Refresh token is expired - user must re-login");
+            Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: FAILED - RefreshToken is expired! User must re-login.");
             return false;
         }
 
-        _logger.LogInformation(">>> [SERVER] AuthService: Attempting token refresh");
+        Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: Calling WebApi /api/auth/refresh...");
 
         try
         {
@@ -168,52 +260,86 @@ public class AuthService : IAuthService
             };
 
             var response = await client.PostAsJsonAsync("api/auth/refresh", refreshRequest);
+            Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: Response status = {(int)response.StatusCode} {response.StatusCode}");
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning(">>> [SERVER] AuthService: Token refresh failed");
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: FAILED - {errorContent}");
                 return false;
             }
 
             var authResponse = await response.Content.ReadFromJsonAsync<AuthResponse>();
             if (authResponse?.Success != true)
             {
-                _logger.LogWarning(">>> [SERVER] AuthService: Token refresh returned unsuccessful response");
+                Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: FAILED - API returned Success=false");
                 return false;
             }
+
+            Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: New tokens received:");
+            Console.WriteLine($">>>   - New AccessToken expires: {authResponse.Expiration:yyyy-MM-dd HH:mm:ss} UTC");
 
             // Update the cookie with new tokens
             await UpdateAuthCookieAsync(httpContext, authResponse);
 
-            _logger.LogInformation(">>> [SERVER] AuthService: Token refresh successful");
+            Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: Cookie updated with new tokens");
+            Console.WriteLine($"╔══════════════════════════════════════════════════════════════╗");
+            Console.WriteLine($"║ [BLAZOR] AuthService.RefreshTokenIfNeededAsync: SUCCESS!     ║");
+            Console.WriteLine($"╚══════════════════════════════════════════════════════════════╝");
+            Console.WriteLine($"");
+
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, ">>> [SERVER] AuthService: Exception during token refresh");
+            Console.WriteLine($">>> [BLAZOR] AuthService.RefreshTokenIfNeededAsync: EXCEPTION - {ex.Message}");
             return false;
         }
     }
 
     private async Task<HttpClient?> GetAuthenticatedClientAsync()
     {
+        Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: Getting authenticated client...");
+
         var tokenData = GetTokenDataFromCookie();
         if (tokenData == null)
+        {
+            Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: No token data in cookie");
             return null;
+        }
+
+        Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: Token found, checking expiry...");
+        Console.WriteLine($">>>   - AccessToken expires: {tokenData.AccessTokenExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - Current time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - Time until expiry: {(tokenData.AccessTokenExpiry - DateTime.UtcNow).TotalSeconds:F0} seconds");
 
         // Check if we should refresh before making the call
         if (await IsTokenExpiringSoonAsync())
         {
-            await RefreshTokenIfNeededAsync();
-            tokenData = GetTokenDataFromCookie();  // Get updated token
-            if (tokenData == null)
-                return null;
+            Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: Token expiring soon, refreshing first...");
+            var refreshed = await RefreshTokenIfNeededAsync();
+
+            if (refreshed)
+            {
+                tokenData = GetTokenDataFromCookie();  // Get updated token
+                if (tokenData == null)
+                {
+                    Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: Token data lost after refresh!");
+                    return null;
+                }
+                Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: Using refreshed token");
+            }
+            else
+            {
+                Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: Refresh failed, using existing token (may fail)");
+            }
         }
 
         var client = _httpClientFactory.CreateClient("WebApi");
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", tokenData.AccessToken);
 
+        Console.WriteLine($">>> [BLAZOR] AuthService.GetAuthenticatedClientAsync: Client ready with Bearer token");
         return client;
     }
 
@@ -239,6 +365,8 @@ public class AuthService : IAuthService
 
     private async Task UpdateAuthCookieAsync(HttpContext httpContext, AuthResponse authResponse)
     {
+        Console.WriteLine($">>> [BLAZOR] AuthService.UpdateAuthCookieAsync: Updating cookie with new tokens...");
+
         // Preserve existing claims but update token data
         var existingClaims = httpContext.User.Claims
             .Where(c => c.Type != "TokenData")
@@ -248,7 +376,7 @@ public class AuthService : IAuthService
         {
             AccessToken = authResponse.Token!,
             RefreshToken = authResponse.RefreshToken!,
-            AccessTokenExpiry = authResponse.Expiration ?? DateTime.UtcNow.AddMinutes(15),
+            AccessTokenExpiry = authResponse.Expiration ?? DateTime.UtcNow.AddMinutes(1),
             RefreshTokenExpiry = DateTime.UtcNow.AddDays(7)
         };
 
@@ -261,5 +389,7 @@ public class AuthService : IAuthService
             CookieAuthenticationDefaults.AuthenticationScheme,
             new ClaimsPrincipal(new ClaimsIdentity(newClaims, CookieAuthenticationDefaults.AuthenticationScheme)),
             new AuthenticationProperties { IsPersistent = true });
+
+        Console.WriteLine($">>> [BLAZOR] AuthService.UpdateAuthCookieAsync: Cookie updated successfully");
     }
 }

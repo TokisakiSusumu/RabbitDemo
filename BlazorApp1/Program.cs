@@ -1,4 +1,4 @@
-using BlazorApp1.Components;
+﻿using BlazorApp1.Components;
 using BlazorApp1.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -36,11 +36,18 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         // Cookie events for debugging
         options.Events = new CookieAuthenticationEvents
         {
-            OnValidatePrincipal = async context =>       
+            OnValidatePrincipal = async context =>
             {
-                Console.WriteLine(">>> [SERVER] Cookie: Validating principal");
+                Console.WriteLine($"");
+                Console.WriteLine($"▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓");
+                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: START");
+                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: Current UTC = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+                Console.WriteLine($"▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓");
 
-                // Check if we need to refresh the token
+                var userName = context.Principal?.Identity?.Name;
+                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: User = {userName}");
+
+                // Check token data
                 var tokenDataClaim = context.Principal?.FindFirst("TokenData");
                 if (tokenDataClaim != null)
                 {
@@ -49,39 +56,75 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
                         var tokenData = JsonSerializer.Deserialize<TokenData>(tokenDataClaim.Value);
                         if (tokenData != null)
                         {
+                            Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: Token data found:");
+                            Console.WriteLine($">>>   - AccessToken expires: {tokenData.AccessTokenExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+                            Console.WriteLine($">>>   - RefreshToken expires: {tokenData.RefreshTokenExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+
+                            var accessTimeLeft = tokenData.AccessTokenExpiry - DateTime.UtcNow;
+                            var refreshTimeLeft = tokenData.RefreshTokenExpiry - DateTime.UtcNow;
+
+                            Console.WriteLine($">>>   - Time until access expiry: {accessTimeLeft.TotalSeconds:F0} seconds");
+                            Console.WriteLine($">>>   - Time until refresh expiry: {refreshTimeLeft.TotalDays:F2} days");
+
                             // If access token is expired, check refresh token
                             if (tokenData.AccessTokenExpiry <= DateTime.UtcNow)
                             {
-                                Console.WriteLine(">>> [SERVER] Cookie: Access token expired");
+                                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: ⚠️ Access token is EXPIRED!");
 
                                 // If refresh token is also expired, reject the cookie
                                 if (tokenData.RefreshTokenExpiry <= DateTime.UtcNow)
                                 {
-                                    Console.WriteLine(">>> [SERVER] Cookie: Refresh token also expired - rejecting");
+                                    Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: ❌ Refresh token also EXPIRED!");
+                                    Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: REJECTING principal - user must re-login");
                                     context.RejectPrincipal();
                                     await context.HttpContext.SignOutAsync();
                                     return;
                                 }
 
-                                // Token needs refresh - let the AuthService handle it on next API call
-                                Console.WriteLine(">>> [SERVER] Cookie: Refresh token still valid - will refresh on API call");
+                                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: ✓ Refresh token still valid");
+                                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: AuthService will refresh on next API call");
+                            }
+                            else
+                            {
+                                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: ✓ Access token is still valid");
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($">>> [SERVER] Cookie: Error parsing token data - {ex.Message}");
+                        Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: ERROR parsing token data - {ex.Message}");
                     }
                 }
+                else
+                {
+                    Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: No TokenData claim found in cookie");
+                }
+
+                Console.WriteLine($">>> [BLAZOR] Cookie.OnValidatePrincipal: END - Principal validated");
+                Console.WriteLine($"");
             },
             OnSigningIn = context =>
             {
-                Console.WriteLine(">>> [SERVER] Cookie: Signing in user");
+                Console.WriteLine($"");
+                Console.WriteLine($">>> [BLAZOR] Cookie.OnSigningIn: User signing in...");
+                Console.WriteLine($">>>   - User: {context.Principal?.Identity?.Name}");
+                Console.WriteLine($">>>   - Claims count: {context.Principal?.Claims.Count()}");
+                Console.WriteLine($"");
                 return Task.CompletedTask;
             },
             OnSignedIn = context =>
             {
-                Console.WriteLine($">>> [SERVER] Cookie: User signed in - {context.Principal?.Identity?.Name}");
+                Console.WriteLine($"");
+                Console.WriteLine($">>> [BLAZOR] Cookie.OnSignedIn: ✅ User signed in successfully");
+                Console.WriteLine($">>>   - User: {context.Principal?.Identity?.Name}");
+                Console.WriteLine($"");
+                return Task.CompletedTask;
+            },
+            OnSigningOut = context =>
+            {
+                Console.WriteLine($"");
+                Console.WriteLine($">>> [BLAZOR] Cookie.OnSigningOut: User signing out...");
+                Console.WriteLine($"");
                 return Task.CompletedTask;
             }
         };
@@ -128,17 +171,29 @@ app.MapPost("/Account/Login", async (
     [FromForm] string password,
     [FromForm] string? returnUrl = null) =>
 {
-    Console.WriteLine($">>> [SERVER] Login endpoint: Attempting login for {email}");
+    Console.WriteLine($"");
+    Console.WriteLine($"████████████████████████████████████████████████████████████████");
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Login: START");
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Login: Email = {email}");
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Login: Current UTC = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+    Console.WriteLine($"████████████████████████████████████████████████████████████████");
 
     var client = httpClientFactory.CreateClient("WebApi");
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Login: Calling WebApi /api/auth/login...");
+
     var response = await client.PostAsJsonAsync("api/auth/login", new { email, password });
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Login: WebApi response status = {(int)response.StatusCode} {response.StatusCode}");
 
     if (response.IsSuccessStatusCode)
     {
         var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
         if (result?.Success == true && result.Token != null && result.RefreshToken != null)
         {
-            Console.WriteLine($">>> [SERVER] Login endpoint: WebApi returned success");
+            Console.WriteLine($">>> [BLAZOR] POST /Account/Login: WebApi returned SUCCESS");
+            Console.WriteLine($">>>   - AccessToken length: {result.Token.Length}");
+            Console.WriteLine($">>>   - RefreshToken length: {result.RefreshToken.Length}");
+            Console.WriteLine($">>>   - AccessToken expires: {result.Expiration:yyyy-MM-dd HH:mm:ss} UTC");
+            Console.WriteLine($">>>   - Roles: [{string.Join(", ", result.Roles)}]");
 
             // Build claims including token data
             var claims = new List<Claim>
@@ -153,10 +208,13 @@ app.MapPost("/Account/Login", async (
             {
                 AccessToken = result.Token,
                 RefreshToken = result.RefreshToken,
-                AccessTokenExpiry = result.Expiration ?? DateTime.UtcNow.AddMinutes(15),
+                AccessTokenExpiry = result.Expiration ?? DateTime.UtcNow.AddMinutes(1),
                 RefreshTokenExpiry = DateTime.UtcNow.AddDays(7)
             };
             claims.Add(new Claim("TokenData", JsonSerializer.Serialize(tokenData)));
+
+            Console.WriteLine($">>> [BLAZOR] POST /Account/Login: Creating authentication cookie...");
+            Console.WriteLine($">>>   - TokenData stored with AccessExpiry = {tokenData.AccessTokenExpiry:yyyy-MM-dd HH:mm:ss} UTC");
 
             await context.SignInAsync(
                 CookieAuthenticationDefaults.AuthenticationScheme,
@@ -164,15 +222,23 @@ app.MapPost("/Account/Login", async (
                 new AuthenticationProperties
                 {
                     IsPersistent = true,
-                    ExpiresUtc = DateTimeOffset.UtcNow.AddDays(7)  // Match refresh token
+                    ExpiresUtc = DateTimeOffset.UtcNow.AddDays(7)
                 });
 
-            Console.WriteLine($">>> [SERVER] Login endpoint: Cookie created, redirecting");
+            Console.WriteLine($">>> [BLAZOR] POST /Account/Login: Cookie created, redirecting to {returnUrl ?? "/"}");
+            Console.WriteLine($"████████████████████████████████████████████████████████████████");
+            Console.WriteLine($"");
+
             return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl ?? "/");
         }
     }
 
-    Console.WriteLine($">>> [SERVER] Login endpoint: Login failed");
+    var errorContent = await response.Content.ReadAsStringAsync();
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Login: FAILED");
+    Console.WriteLine($">>>   - Response: {errorContent}");
+    Console.WriteLine($"████████████████████████████████████████████████████████████████");
+    Console.WriteLine($"");
+
     return Results.Redirect($"/Account/Login?error=Invalid+credentials&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
 });
 
@@ -183,7 +249,7 @@ app.MapPost("/Account/Register", async (
     [FromForm] string? firstName,
     [FromForm] string? lastName) =>
 {
-    Console.WriteLine($">>> [SERVER] Register endpoint: Attempting registration for {email}");
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Register: Registering {email}");
 
     var client = httpClientFactory.CreateClient("WebApi");
     var response = await client.PostAsJsonAsync("api/auth/register", new { email, password, firstName, lastName });
@@ -193,7 +259,7 @@ app.MapPost("/Account/Register", async (
         var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
         if (result?.Success == true)
         {
-            Console.WriteLine($">>> [SERVER] Register endpoint: Success");
+            Console.WriteLine($">>> [BLAZOR] POST /Account/Register: SUCCESS");
             return Results.Redirect("/Account/Login?message=Registration+successful");
         }
 
@@ -201,13 +267,14 @@ app.MapPost("/Account/Register", async (
         return Results.Redirect($"/Account/Register?error={Uri.EscapeDataString(errors)}");
     }
 
-    Console.WriteLine($">>> [SERVER] Register endpoint: Failed");
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Register: FAILED");
     return Results.Redirect("/Account/Register?error=Registration+failed");
 });
 
 app.MapPost("/Account/Logout", async (HttpContext context, IHttpClientFactory httpClientFactory) =>
 {
-    Console.WriteLine($">>> [SERVER] Logout endpoint: Logging out user");
+    Console.WriteLine($"");
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Logout: START");
 
     // Try to revoke refresh tokens on the backend
     var tokenDataClaim = context.User.FindFirst("TokenData");
@@ -218,6 +285,7 @@ app.MapPost("/Account/Logout", async (HttpContext context, IHttpClientFactory ht
             var tokenData = JsonSerializer.Deserialize<TokenData>(tokenDataClaim.Value);
             if (tokenData != null)
             {
+                Console.WriteLine($">>> [BLAZOR] POST /Account/Logout: Revoking tokens on WebApi...");
                 var client = httpClientFactory.CreateClient("WebApi");
                 client.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenData.AccessToken);
@@ -233,6 +301,9 @@ app.MapPost("/Account/Logout", async (HttpContext context, IHttpClientFactory ht
     }
 
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    Console.WriteLine($">>> [BLAZOR] POST /Account/Logout: Cookie cleared, redirecting");
+    Console.WriteLine($"");
+
     return Results.Redirect("/");
 });
 

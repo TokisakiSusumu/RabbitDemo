@@ -29,12 +29,16 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request)
     {
-        Console.WriteLine($">>> [WEBAPI] Register: Attempting to register {request.Email}");
+        Console.WriteLine($"");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Register: START");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Register: Email={request.Email}");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
 
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
         if (existingUser != null)
         {
-            Console.WriteLine($">>> [WEBAPI] Register: Email already exists");
+            Console.WriteLine($">>> [WEBAPI] AuthController.Register: FAILED - Email already exists");
             return BadRequest(new AuthResponse
             {
                 Success = false,
@@ -54,7 +58,7 @@ public class AuthController : ControllerBase
 
         if (!result.Succeeded)
         {
-            Console.WriteLine($">>> [WEBAPI] Register: Failed - {string.Join(", ", result.Errors.Select(e => e.Description))}");
+            Console.WriteLine($">>> [WEBAPI] AuthController.Register: FAILED - {string.Join(", ", result.Errors.Select(e => e.Description))}");
             return BadRequest(new AuthResponse
             {
                 Success = false,
@@ -63,7 +67,7 @@ public class AuthController : ControllerBase
         }
 
         await _userManager.AddToRoleAsync(user, "User");
-        Console.WriteLine($">>> [WEBAPI] Register: Success for {request.Email}");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Register: SUCCESS - User created with 'User' role");
 
         return Ok(new AuthResponse
         {
@@ -75,12 +79,17 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request)
     {
-        Console.WriteLine($">>> [WEBAPI] Login: Attempting login for {request.Email}");
+        Console.WriteLine($"");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Login: START");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Login: Email={request.Email}");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Login: Current UTC time = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
 
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user == null)
         {
-            Console.WriteLine($">>> [WEBAPI] Login: User not found");
+            Console.WriteLine($">>> [WEBAPI] AuthController.Login: FAILED - User not found");
             return Unauthorized(new AuthResponse
             {
                 Success = false,
@@ -88,17 +97,20 @@ public class AuthController : ControllerBase
             });
         }
 
+        Console.WriteLine($">>> [WEBAPI] AuthController.Login: User found, checking password...");
         var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, false);
 
         if (!result.Succeeded)
         {
-            Console.WriteLine($">>> [WEBAPI] Login: Invalid password");
+            Console.WriteLine($">>> [WEBAPI] AuthController.Login: FAILED - Invalid password");
             return Unauthorized(new AuthResponse
             {
                 Success = false,
                 Errors = ["Invalid credentials"]
             });
         }
+
+        Console.WriteLine($">>> [WEBAPI] AuthController.Login: Password valid, generating tokens...");
 
         // Generate both access token and refresh token
         var (accessToken, refreshToken, accessExpiry, refreshExpiry) =
@@ -106,7 +118,13 @@ public class AuthController : ControllerBase
 
         var roles = await _userManager.GetRolesAsync(user);
 
-        Console.WriteLine($">>> [WEBAPI] Login: Success - AccessToken expires {accessExpiry}, RefreshToken expires {refreshExpiry}");
+        Console.WriteLine($"");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Login: SUCCESS");
+        Console.WriteLine($">>>   - AccessToken expires: {accessExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - RefreshToken expires: {refreshExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - Roles: [{string.Join(", ", roles)}]");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+        Console.WriteLine($"");
 
         return Ok(new AuthResponse
         {
@@ -122,13 +140,18 @@ public class AuthController : ControllerBase
     [HttpPost("refresh")]
     public async Task<ActionResult<AuthResponse>> RefreshToken([FromBody] RefreshTokenRequest request)
     {
-        Console.WriteLine($">>> [WEBAPI] RefreshToken: Attempting to refresh tokens");
+        Console.WriteLine($"");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+        Console.WriteLine($">>> [WEBAPI] AuthController.RefreshToken: START");
+        Console.WriteLine($">>> [WEBAPI] AuthController.RefreshToken: Current UTC time = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
 
         var result = await _tokenService.RefreshTokensAsync(request.Token, request.RefreshToken);
 
         if (result == null)
         {
-            Console.WriteLine($">>> [WEBAPI] RefreshToken: Invalid or expired tokens");
+            Console.WriteLine($">>> [WEBAPI] AuthController.RefreshToken: FAILED - Token refresh failed");
+            Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
             return Unauthorized(new AuthResponse
             {
                 Success = false,
@@ -143,7 +166,13 @@ public class AuthController : ControllerBase
         var email = principal?.FindFirstValue(ClaimTypes.Email);
         var roles = principal?.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList() ?? [];
 
-        Console.WriteLine($">>> [WEBAPI] RefreshToken: Success - New tokens generated");
+        Console.WriteLine($"");
+        Console.WriteLine($">>> [WEBAPI] AuthController.RefreshToken: SUCCESS");
+        Console.WriteLine($">>>   - New AccessToken expires: {accessExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - New RefreshToken expires: {refreshExpiry:yyyy-MM-dd HH:mm:ss} UTC");
+        Console.WriteLine($">>>   - User: {email}");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+        Console.WriteLine($"");
 
         return Ok(new AuthResponse
         {
@@ -160,13 +189,19 @@ public class AuthController : ControllerBase
     [HttpPost("logout")]
     public async Task<IActionResult> Logout()
     {
+        Console.WriteLine($"");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+        Console.WriteLine($">>> [WEBAPI] AuthController.Logout: START");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (!string.IsNullOrEmpty(userId))
         {
-            Console.WriteLine($">>> [WEBAPI] Logout: Revoking all refresh tokens for user {userId}");
+            Console.WriteLine($">>> [WEBAPI] AuthController.Logout: Revoking tokens for userId={userId}");
             await _tokenService.RevokeRefreshTokenAsync(userId);
         }
 
+        Console.WriteLine($">>> [WEBAPI] AuthController.Logout: SUCCESS");
         return Ok(new { message = "Logged out successfully" });
     }
 
@@ -174,20 +209,29 @@ public class AuthController : ControllerBase
     [HttpGet("me")]
     public async Task<ActionResult<UserInfo>> GetCurrentUser()
     {
-        Console.WriteLine($">>> [WEBAPI] GetCurrentUser: Fetching user info");
+        Console.WriteLine($"");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
+        Console.WriteLine($">>> [WEBAPI] AuthController.GetCurrentUser: START");
+        Console.WriteLine($">>> [WEBAPI] AuthController.GetCurrentUser: Current UTC time = {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        Console.WriteLine($">>> [WEBAPI] AuthController.GetCurrentUser: UserId from token = {userId}");
+
         var user = await _userManager.FindByIdAsync(userId!);
 
         if (user == null)
         {
-            Console.WriteLine($">>> [WEBAPI] GetCurrentUser: User not found");
+            Console.WriteLine($">>> [WEBAPI] AuthController.GetCurrentUser: FAILED - User not found");
             return NotFound();
         }
 
         var roles = await _userManager.GetRolesAsync(user);
 
-        Console.WriteLine($">>> [WEBAPI] GetCurrentUser: Found {user.Email} with roles: {string.Join(", ", roles)}");
+        Console.WriteLine($">>> [WEBAPI] AuthController.GetCurrentUser: SUCCESS");
+        Console.WriteLine($">>>   - Email: {user.Email}");
+        Console.WriteLine($">>>   - Roles: [{string.Join(", ", roles)}]");
+        Console.WriteLine($"¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T");
 
         return Ok(new UserInfo
         {
@@ -202,7 +246,7 @@ public class AuthController : ControllerBase
     [HttpPost("assign-role")]
     public async Task<IActionResult> AssignRole([FromBody] AssignRoleRequest request)
     {
-        Console.WriteLine($">>> [WEBAPI] AssignRole: Assigning {request.Role} to {request.Email}");
+        Console.WriteLine($">>> [WEBAPI] AuthController.AssignRole: Assigning {request.Role} to {request.Email}");
 
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user == null)

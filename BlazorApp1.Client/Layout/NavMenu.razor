@@ -1,15 +1,10 @@
-@* 
+﻿@* 
     NavMenu - Runs in WebAssembly (browser)
     
     WHY WASM? 
     - No constant SignalR connection needed
     - Works even when internet connection is temporarily lost
     - Auth state is read from PersistentComponentState (already in browser)
-    
-    If this was InteractiveServer:
-    - Would need constant SignalR connection
-    - Would show "Attempting to reconnect..." when internet lost
-    - Page would become unusable
 *@
 
 @inject AuthenticationStateProvider AuthStateProvider
@@ -48,6 +43,12 @@
                 <div class="nav-item px-3">
                     <NavLink class="nav-link" href="profile">
                         <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Profile
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="token-test">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> 🔐 Token Test
                     </NavLink>
                 </div>
 

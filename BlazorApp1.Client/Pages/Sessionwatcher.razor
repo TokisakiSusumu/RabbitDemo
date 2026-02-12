@@ -1,0 +1,79 @@
+﻿@using BlazorApp1.Client.Services
+@using Shared.Auth
+@inject IApiClient ApiClient
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@* This component renders nothing visible. It runs in WASM via MainLayout. *@
+
+@code {
+    private Timer? _timer;
+    private bool _wasAuthenticated;
+    private bool _redirecting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var status = await ApiClient.GetTokenStatusAsync();
+            _wasAuthenticated = status?.HasTokenData == true && !status.IsAccessTokenExpired;
+            Console.WriteLine($"[SESSION-WATCHER] Init: authenticated={_wasAuthenticated}");
+        }
+        catch
+        {
+            Console.WriteLine("[SESSION-WATCHER] Init: failed to get status (not logged in?)");
+            _wasAuthenticated = false;
+        }
+
+        if (_wasAuthenticated)
+        {
+            // Poll every 3 seconds to detect session expiry
+            _timer = new Timer(CheckSession, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+        }
+    }
+
+    private async void CheckSession(object? state)
+    {
+        if (_redirecting) return;
+
+        try
+        {
+            var status = await ApiClient.GetTokenStatusAsync();
+
+            // Session is dead if:
+            // 1. BFF returned null (cookie rejected = 401)
+            // 2. Token expired
+            // 3. Session expired
+            var isDead = status == null
+                || !status.HasTokenData
+                || status.IsAccessTokenExpired
+                || status.IsSessionExpired;
+
+            if (_wasAuthenticated && isDead)
+            {
+                _redirecting = true;
+                _timer?.Dispose();
+                Console.WriteLine("[SESSION-WATCHER] Session expired, redirecting to login...");
+
+                await InvokeAsync(() =>
+                {
+                    var currentUri = Navigation.Uri;
+                    var returnUrl = Uri.EscapeDataString(currentUri);
+                    Navigation.NavigateTo(
+                        $"Account/Login?error=Your+session+has+expired&returnUrl={returnUrl}",
+                        forceLoad: true);
+                });
+            }
+        }
+        catch
+        {
+            // Network error during polling — don't crash, will retry next tick
+        }
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        Console.WriteLine("[SESSION-WATCHER] Disposed");
+    }
+}

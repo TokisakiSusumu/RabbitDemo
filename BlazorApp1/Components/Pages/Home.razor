@@ -2,16 +2,34 @@
 
 <PageTitle>Home</PageTitle>
 
-<h1>Hello, world!</h1>
+<h1>Blazor Auth Demo</h1>
 
-<p>Welcome to your Blazor app with authentication.</p>
+<p>Sliding session with ASP.NET Identity API endpoints (MapIdentityApi).</p>
 
-<div class="alert alert-info mt-4">
-    <h5>Architecture Info</h5>
-    <ul>
-        <li><strong>NavMenu:</strong> InteractiveWebAssembly - works without constant server connection</li>
-        <li><strong>Auth Pages:</strong> Static SSR with cookie auth</li>
-        <li><strong>Other Pages:</strong> InteractiveAuto - Server first, then WASM</li>
-        <li><strong>Auth State:</strong> Cookie (server) + PersistentComponentState (WASM)</li>
-    </ul>
+<div class="card mt-3" style="max-width:500px;">
+    <div class="card-body">
+        <h5>Quick Start</h5>
+        <ol>
+            <li><a href="Account/Register">Register</a> an account</li>
+            <li><a href="Account/Login">Login</a> with your credentials</li>
+            <li>Open <a href="token-test">Session Test</a> to watch the token lifecycle</li>
+        </ol>
+        <p class="text-muted mb-0">
+            <small>Session auto-expires after inactivity. You'll be redirected to login automatically.</small>
+        </p>
+    </div>
 </div>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="alert alert-success mt-3" style="max-width:500px;">
+            Logged in as <strong>@context.User.Identity?.Name</strong>
+            ¡ª <a href="token-test">Go to Session Test ¡ú</a>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <div class="alert alert-warning mt-3" style="max-width:500px;">
+            Not logged in. <a href="Account/Login">Login</a> or <a href="Account/Register">Register</a>.
+        </div>
+    </NotAuthorized>
+</AuthorizeView>

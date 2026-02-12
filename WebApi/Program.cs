@@ -1,76 +1,44 @@
-using System.Text;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using WebApi.Configuration;
+using Shared.Auth;
+using System.Security.Claims;
 using WebApi.Data;
-using WebApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddControllers();
 
 // Database
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Identity
-builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
-{
-    options.Password.RequireDigit = true;
-    options.Password.RequireLowercase = true;
-    options.Password.RequireUppercase = true;
-    options.Password.RequireNonAlphanumeric = false;
-    options.Password.RequiredLength = 6;
-})
-.AddEntityFrameworkStores<ApplicationDbContext>()
-.AddDefaultTokenProviders();
-
-// JWT Configuration
-var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>()!;
-builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
-
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
+// Identity with built-in API endpoints (replaces our custom AuthController + TokenService)
+// This gives us: /login, /refresh, /register (built-in), /manage/* endpoints
+// And sets up bearer token authentication automatically
+builder.Services
+    .AddIdentityApiEndpoints<ApplicationUser>(options =>
     {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings.Issuer,
-        ValidAudience = jwtSettings.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Secret)),
-        ClockSkew = TimeSpan.Zero  // No tolerance for token expiration
-    };
+        options.Password.RequireDigit = true;
+        options.Password.RequireLowercase = true;
+        options.Password.RequireUppercase = true;
+        options.Password.RequireNonAlphanumeric = false;
+        options.Password.RequiredLength = 6;
+    })
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<ApplicationDbContext>();
 
-    // Event handlers for debugging
-    options.Events = new JwtBearerEvents
-    {
-        OnAuthenticationFailed = context =>
-        {
-            Console.WriteLine($">>> [WEBAPI] JWT Auth Failed: {context.Exception.Message}");
-            return Task.CompletedTask;
-        },
-        OnTokenValidated = context =>
-        {
-            var userId = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            Console.WriteLine($">>> [WEBAPI] JWT Token Validated for user: {userId}");
-            return Task.CompletedTask;
-        }
-    };
+// Configure bearer token lifetimes (replaces our custom JwtSettings)
+var tokenLifetimeSeconds = builder.Configuration.GetValue("AuthSettings:TokenLifetimeSeconds", 3600);
+var maxSessionHours = builder.Configuration.GetValue("AuthSettings:MaxSessionHours", 24);
+
+Console.WriteLine($">>> [WEBAPI] Token lifetime: {tokenLifetimeSeconds}s, Max session: {maxSessionHours}h");
+
+builder.Services.Configure<BearerTokenOptions>(IdentityConstants.BearerScheme, options =>
+{
+    options.BearerTokenExpiration = TimeSpan.FromSeconds(tokenLifetimeSeconds);
+    options.RefreshTokenExpiration = TimeSpan.FromHours(maxSessionHours);
 });
 
 builder.Services.AddAuthorization();
-
-// Register TokenService
-builder.Services.AddScoped<ITokenService, TokenService>();
 
 // CORS for Blazor app
 builder.Services.AddCors(options =>
@@ -90,20 +58,82 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
-    string[] roles = ["Admin", "User", "Manager"];
-
-    foreach (var role in roles)
+    foreach (var role in new[] { "Admin", "User", "Manager" })
     {
         if (!await roleManager.RoleExistsAsync(role))
-        {
             await roleManager.CreateAsync(new IdentityRole(role));
-        }
     }
 }
 
 app.UseCors("BlazorApp");
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapControllers();
+
+// =====================================================================
+//  Identity API endpoints (built-in login, refresh, etc.)
+//  Maps: POST /api/identity/login, POST /api/identity/refresh, etc.
+// =====================================================================
+app.MapGroup("/api/identity").MapIdentityApi<ApplicationUser>();
+
+// =====================================================================
+//  Custom endpoints (register with role + user info with roles)
+// =====================================================================
+
+// Custom register: creates user AND assigns "User" role
+// (MapIdentityApi's built-in /register doesn't assign roles)
+app.MapPost("/api/auth/register", async (
+    RegisterRequest request,
+    UserManager<ApplicationUser> userManager) =>
+{
+    Console.WriteLine($">>> [WEBAPI] Register: {request.Email}");
+
+    var user = new ApplicationUser
+    {
+        UserName = request.Email,
+        Email = request.Email,
+        FirstName = request.FirstName,
+        LastName = request.LastName
+    };
+
+    var result = await userManager.CreateAsync(user, request.Password);
+    if (!result.Succeeded)
+    {
+        var errors = result.Errors.Select(e => e.Description).ToList();
+        Console.WriteLine($">>> [WEBAPI] Register FAILED: {string.Join(", ", errors)}");
+        return Results.BadRequest(new { success = false, errors });
+    }
+
+    await userManager.AddToRoleAsync(user, "User");
+    Console.WriteLine($">>> [WEBAPI] Register SUCCESS: {request.Email} (assigned 'User' role)");
+
+    return Results.Ok(new { success = true, email = user.Email });
+});
+
+// User info with roles (MapIdentityApi's /manage/info doesn't include roles conveniently)
+app.MapGet("/api/auth/me", async (
+    HttpContext context,
+    UserManager<ApplicationUser> userManager) =>
+{
+    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (string.IsNullOrEmpty(userId))
+    {
+        Console.WriteLine(">>> [WEBAPI] GetMe: no user ID in token");
+        return Results.Unauthorized();
+    }
+
+    var user = await userManager.FindByIdAsync(userId);
+    if (user == null) return Results.NotFound();
+
+    var roles = await userManager.GetRolesAsync(user);
+    Console.WriteLine($">>> [WEBAPI] GetMe: {user.Email}, roles=[{string.Join(",", roles)}]");
+
+    return Results.Ok(new UserInfo
+    {
+        Email = user.Email!,
+        FirstName = user.FirstName,
+        LastName = user.LastName,
+        Roles = roles.ToList()
+    });
+}).RequireAuthorization();
 
 app.Run();

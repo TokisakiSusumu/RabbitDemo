@@ -1,0 +1,292 @@
+﻿@page "/token-test"
+@rendermode InteractiveAuto
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@using Shared.Auth
+@using BlazorApp1.Client.Services
+@inject IApiClient ApiClient
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>Session Test</PageTitle>
+
+<h1>🔐 Session Test Dashboard</h1>
+
+<div class="alert alert-secondary mb-3">
+    <strong>Render:</strong> <span class="badge bg-info">@_renderLocation</span>
+    — Token: 30s, renewal window: last 15s.
+    <strong>Auto-redirect</strong> is active — when token expires, you'll be sent to login automatically.
+</div>
+
+@* ===== STATUS CARD ===== *@
+<div class="card mb-3 border-2 @GetStatusBorderClass()">
+    <div class="card-header d-flex justify-content-between align-items-center @GetStatusHeaderClass() text-white">
+        <strong>Session Status</strong>
+        <span class="badge bg-light text-dark">@(_status?.ServerTimeUtc.ToString("HH:mm:ss") ?? "--:--:--") UTC</span>
+    </div>
+    <div class="card-body">
+        @if (_status == null || !_status.HasTokenData)
+        {
+            <div class="text-center py-3">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2 text-muted">Loading session status...</p>
+            </div>
+        }
+        else
+        {
+            <div class="row">
+                <div class="col-md-4 text-center">
+                    <h6 class="text-muted">Token Time Left</h6>
+                    <h1 class="@GetCountdownClass()">
+                        @FormatSeconds(_status.SecondsUntilAccessExpiry)
+                    </h1>
+                    @if (_status.IsInRenewalWindow)
+                    {
+                        <span class="badge bg-warning text-dark fs-6">⏰ RENEWAL WINDOW</span>
+                        <br />
+
+                        <small class="text-muted">Next API call will auto-renew</small>
+                    }
+                    else if (_status.IsAccessTokenExpired)
+                    {
+                        <span class="badge bg-danger fs-6">EXPIRED</span>
+                        <br />
+
+                        <small class="text-danger">Auto-redirect in a moment...</small>
+                    }
+                    else
+                    {
+                        <span class="badge bg-success fs-6">ACTIVE</span>
+                    }
+                </div>
+
+                <div class="col-md-4">
+                    <h6 class="text-muted">Token Details</h6>
+                    <table class="table table-sm mb-0">
+                        <tr>
+                            <td>Expires at</td>
+                            <td><strong>@_status.AccessTokenExpiry?.ToString("HH:mm:ss")</strong> UTC</td>
+                        </tr>
+                        <tr>
+                            <td>Renewal window</td>
+                            <td>Last <strong>@_status.RenewalBufferSeconds?.ToString("F0")</strong>s</td>
+                        </tr>
+                        <tr>
+                            <td>Renewals</td>
+                            <td><span class="badge bg-primary">@_renewalCount</span></td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="col-md-4">
+                    <h6 class="text-muted">Session Details</h6>
+                    <table class="table table-sm mb-0">
+                        <tr>
+                            <td>Session expires</td>
+                            <td><strong>@_status.SessionAbsoluteExpiry?.ToString("HH:mm")</strong> UTC</td>
+                        </tr>
+                        <tr>
+                            <td>Session left</td>
+                            <td>@FormatHours(_status.SecondsUntilSessionExpiry)</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@* ===== API TEST ===== *@
+<div class="card mb-3">
+    <div class="card-header"><strong>🧪 API Test</strong> — triggers renewal if in window</div>
+    <div class="card-body">
+        <button class="btn btn-primary btn-lg" @onclick="FetchUserInfo" disabled="@_loading">
+            @if (_loading)
+            {
+                <span class="spinner-border spinner-border-sm me-2"></span>
+            }
+            Call /api/auth/me
+        </button>
+
+        @if (_apiResult != null)
+        {
+            <div class="alert @(_apiSuccess ? "alert-success" : "alert-danger") mt-3 mb-0">
+                <div class="d-flex justify-content-between">
+                    <strong>@(_apiSuccess ? "✅ " : "❌ ")@_apiResult</strong>
+                    <small class="text-muted">@_apiTime?.ToString("HH:mm:ss") UTC</small>
+                </div>
+                @if (_renewedDuringCall)
+                {
+                    <div class="mt-1">
+                        <span class="badge bg-info">🔄 Token renewed!</span>
+                        New expiry: <strong>@_newExpiryAfterRenew?.ToString("HH:mm:ss")</strong> UTC
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@* ===== EVENT LOG ===== *@
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center bg-dark text-white">
+        <strong>📋 Event Log</strong>
+        <button class="btn btn-sm btn-outline-light" @onclick="() => _log.Clear()">Clear</button>
+    </div>
+    <div class="card-body p-2" style="max-height:200px; overflow-y:auto; font-family:monospace; font-size:0.82em;">
+        @if (_log.Count == 0)
+        {
+            <span class="text-muted">Events will appear here...</span>
+        }
+        @foreach (var entry in _log.AsEnumerable().Reverse())
+        {
+            <div class="@GetLogClass(entry)">@entry</div>
+        }
+    </div>
+</div>
+
+@code {
+    private string _renderLocation = "Unknown";
+    private TokenStatusResponse? _status;
+    private Timer? _timer;
+
+    private bool _loading;
+    private string? _apiResult;
+    private bool _apiSuccess;
+    private DateTime? _apiTime;
+    private bool _renewedDuringCall;
+    private DateTime? _newExpiryAfterRenew;
+
+    private int _renewalCount;
+    private DateTime? _lastKnownExpiry;
+    private List<string> _log = new();
+
+    protected override void OnInitialized()
+    {
+        _renderLocation = OperatingSystem.IsBrowser() ? "WebAssembly" : "Server";
+        Log($"Page loaded in {_renderLocation} mode");
+
+        _timer = new Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    var newStatus = await ApiClient.GetTokenStatusAsync();
+
+                    if (newStatus == null || !newStatus.HasTokenData)
+                    {
+                        Log("⚠️ No token data — SessionWatcher will redirect shortly");
+                        _status = newStatus;
+                        StateHasChanged();
+                        return;
+                    }
+
+                    if (_lastKnownExpiry.HasValue && newStatus.AccessTokenExpiry.HasValue
+                        && newStatus.AccessTokenExpiry > _lastKnownExpiry)
+                    {
+                        _lastKnownExpiry = newStatus.AccessTokenExpiry;
+                    }
+
+                    if (!newStatus.IsAccessTokenExpired)
+                        _lastKnownExpiry = newStatus.AccessTokenExpiry;
+
+                    _status = newStatus;
+                    StateHasChanged();
+                });
+            }
+            catch { }
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private async Task FetchUserInfo()
+    {
+        _loading = true;
+        _renewedDuringCall = false;
+        _newExpiryAfterRenew = null;
+        StateHasChanged();
+
+        var expiryBefore = _status?.AccessTokenExpiry;
+        Log("Calling API: GET /api/auth/me...");
+
+        try
+        {
+            var info = await ApiClient.GetMyInfoAsync();
+            _apiTime = DateTime.UtcNow;
+            _apiSuccess = info != null;
+
+            if (info != null)
+            {
+                _apiResult = $"{info.Email} — roles: [{string.Join(", ", info.Roles)}]";
+                Log($"✅ API SUCCESS: {info.Email}");
+
+                var statusAfter = await ApiClient.GetTokenStatusAsync();
+                if (statusAfter?.AccessTokenExpiry != null && expiryBefore != null
+                    && statusAfter.AccessTokenExpiry > expiryBefore)
+                {
+                    _renewedDuringCall = true;
+                    _newExpiryAfterRenew = statusAfter.AccessTokenExpiry;
+                    _renewalCount++;
+                    _lastKnownExpiry = statusAfter.AccessTokenExpiry;
+                    Log($"🔄 TOKEN RENEWED! New expiry: {statusAfter.AccessTokenExpiry:HH:mm:ss} UTC (#{_renewalCount})");
+                }
+            }
+            else
+            {
+                _apiResult = "No data — session may be expired";
+                Log("❌ API FAILED: null response");
+            }
+        }
+        catch (Exception ex)
+        {
+            _apiTime = DateTime.UtcNow;
+            _apiSuccess = false;
+            _apiResult = $"Exception: {ex.Message}";
+            Log($"❌ EXCEPTION: {ex.Message}");
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private string FormatSeconds(double? seconds)
+    {
+        if (seconds == null) return "--";
+        var s = seconds.Value;
+        return s <= 0 ? "0s" : s >= 60 ? $"{s / 60:F0}m {s % 60:F0}s" : $"{s:F0}s";
+    }
+
+    private string FormatHours(double? seconds)
+    {
+        if (seconds == null) return "--";
+        var h = seconds.Value / 3600;
+        return h <= 0 ? "EXPIRED" : $"{h:F1}h";
+    }
+
+    private string GetCountdownClass() =>
+        _status?.IsAccessTokenExpired == true ? "text-danger" :
+        _status?.IsInRenewalWindow == true ? "text-warning" : "text-success";
+
+    private string GetStatusBorderClass() =>
+        _status?.IsAccessTokenExpired == true ? "border-danger" :
+        _status?.IsInRenewalWindow == true ? "border-warning" : "border-success";
+
+    private string GetStatusHeaderClass() =>
+        _status?.IsAccessTokenExpired == true ? "bg-danger" :
+        _status?.IsInRenewalWindow == true ? "bg-warning text-dark" : "bg-success";
+
+    private string GetLogClass(string entry) =>
+        entry.Contains("✅") || entry.Contains("🔄") ? "text-success" :
+        entry.Contains("❌") || entry.Contains("⛔") ? "text-danger" :
+        entry.Contains("⚠️") ? "text-warning" : "";
+
+    private void Log(string msg)
+    {
+        _log.Add($"[{DateTime.UtcNow:HH:mm:ss}] {msg}");
+        if (_log.Count > 100) _log.RemoveAt(0);
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

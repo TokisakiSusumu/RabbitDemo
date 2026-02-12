@@ -6,29 +6,30 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shared.Auth;
+using System.Net.Http.Headers;
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Blazor with both Server and WebAssembly support
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents(options => options.DetailedErrors = true)
     .AddInteractiveWebAssemblyComponents();
 
-// HttpClient to call WebApi
 builder.Services.AddHttpClient("WebApi", client =>
 {
     client.BaseAddress = new Uri("http://localhost:5100");
 });
 
-// Cookie authentication
+// Read session config (must match WebApi's AuthSettings)
+var maxSessionHours = builder.Configuration.GetValue("AuthSettings:MaxSessionHours", 24);
+
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
         options.LoginPath = "/Account/Login";
         options.LogoutPath = "/Account/Logout";
-        options.ExpireTimeSpan = TimeSpan.FromDays(7);
-        options.SlidingExpiration = true;
+        options.ExpireTimeSpan = TimeSpan.FromHours(maxSessionHours);
+        options.SlidingExpiration = false;
 
         options.Events = new CookieAuthenticationEvents
         {
@@ -37,16 +38,38 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
                 var email = context.Principal?.Identity?.Name;
                 if (email == null)
                 {
-                    Console.WriteLine("[COOKIE] No user in cookie, rejecting");
                     context.RejectPrincipal();
                     return Task.CompletedTask;
                 }
 
-                // If server restarted, token cache is empty → force re-login
                 var cache = context.HttpContext.RequestServices.GetRequiredService<TokenCacheService>();
+
                 if (!cache.HasTokens(email))
                 {
-                    Console.WriteLine($"[COOKIE] No cached tokens for {email} (server restart?), rejecting → re-login");
+                    Console.WriteLine($"[COOKIE] No cached tokens for {email}, rejecting");
+                    context.RejectPrincipal();
+                    return Task.CompletedTask;
+                }
+
+                var tokenData = cache.Get(email);
+                if (tokenData == null)
+                {
+                    context.RejectPrincipal();
+                    return Task.CompletedTask;
+                }
+
+                if (tokenData.SessionAbsoluteExpiry <= DateTime.UtcNow)
+                {
+                    Console.WriteLine($"[COOKIE] Session expired for {email}, rejecting");
+                    cache.Remove(email);
+                    context.RejectPrincipal();
+                    return Task.CompletedTask;
+                }
+
+                if (tokenData.AccessTokenExpiry <= DateTime.UtcNow)
+                {
+                    Console.WriteLine($"[COOKIE] Access token expired for {email}, rejecting");
+                    cache.Remove(email);
                     context.RejectPrincipal();
                     return Task.CompletedTask;
                 }
@@ -60,18 +83,15 @@ builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddHttpContextAccessor();
 
-// ===== Register Services =====
-builder.Services.AddSingleton<TokenCacheService>();  // Singleton: shared across all requests
+builder.Services.AddSingleton<TokenCacheService>();
 builder.Services.AddScoped<AuthenticationStateProvider, PersistingAuthStateProvider>();
 builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IApiClient, ServerApiClient>();  // Server-side: direct JWT calls
+builder.Services.AddScoped<IApiClient, ServerApiClient>();
 
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
-{
     app.UseWebAssemblyDebugging();
-}
 else
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -81,7 +101,6 @@ else
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
-
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -91,54 +110,71 @@ app.MapRazorComponents<App>()
     .AddAdditionalAssemblies(typeof(BlazorApp1.Client._Imports).Assembly);
 
 // =====================================================================
-//  AUTH ENDPOINTS (Login, Register, Logout)
+//  AUTH ENDPOINTS
 // =====================================================================
 
 app.MapPost("/Account/Login", async (
     HttpContext context,
     IHttpClientFactory httpClientFactory,
     TokenCacheService tokenCache,
+    IConfiguration config,
     [FromForm] string email,
     [FromForm] string password,
     [FromForm] string? returnUrl = null) =>
 {
-    Console.WriteLine($"[LOGIN] {email} - calling WebApi...");
+    Console.WriteLine($"[LOGIN] {email}");
 
     var client = httpClientFactory.CreateClient("WebApi");
-    var response = await client.PostAsJsonAsync("api/auth/login", new { email, password });
 
-    if (!response.IsSuccessStatusCode)
+    // Step 1: Call Identity's /login endpoint
+    var loginResponse = await client.PostAsJsonAsync("api/identity/login", new { email, password });
+
+    if (!loginResponse.IsSuccessStatusCode)
     {
-        Console.WriteLine($"[LOGIN] {email} - FAILED: {response.StatusCode}");
+        Console.WriteLine($"[LOGIN] {email} FAILED: {loginResponse.StatusCode}");
         return Results.Redirect($"/Account/Login?error=Invalid+credentials&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
     }
 
-    var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
-    if (result?.Success != true || result.Token == null || result.RefreshToken == null)
+    var tokens = await loginResponse.Content.ReadFromJsonAsync<IdentityTokenResponse>();
+    if (tokens == null || string.IsNullOrEmpty(tokens.AccessToken))
     {
-        Console.WriteLine($"[LOGIN] {email} - FAILED: API returned success=false");
-        return Results.Redirect($"/Account/Login?error=Invalid+credentials&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
+        Console.WriteLine($"[LOGIN] {email} FAILED: empty token response");
+        return Results.Redirect($"/Account/Login?error=Login+failed&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
     }
 
-    Console.WriteLine($"[LOGIN] {email} - SUCCESS, roles=[{string.Join(",", result.Roles)}], access expires {result.Expiration:HH:mm:ss} UTC");
+    Console.WriteLine($"[LOGIN] {email} got tokens, expiresIn={tokens.ExpiresIn}s");
 
-    // 1. Store tokens in SERVER-SIDE CACHE (not cookie!)
+    // Step 2: Call /api/auth/me to get user info + roles
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+    var meResponse = await client.GetAsync("api/auth/me");
+    var userInfo = meResponse.IsSuccessStatusCode
+        ? await meResponse.Content.ReadFromJsonAsync<UserInfo>()
+        : null;
+
+    var roles = userInfo?.Roles ?? [];
+    Console.WriteLine($"[LOGIN] {email} roles=[{string.Join(",", roles)}]");
+
+    // Step 3: Store tokens in server-side cache
+    var sessionHours = config.GetValue("AuthSettings:MaxSessionHours", 24);
+    var renewalBuffer = TimeSpan.FromSeconds(tokens.ExpiresIn / 2.0);
+
     var tokenData = new TokenData
     {
-        AccessToken = result.Token,
-        RefreshToken = result.RefreshToken,
-        AccessTokenExpiry = result.Expiration ?? DateTime.UtcNow.AddMinutes(1),
-        RefreshTokenExpiry = DateTime.UtcNow.AddDays(7)
+        AccessToken = tokens.AccessToken,
+        RefreshToken = tokens.RefreshToken,
+        AccessTokenExpiry = DateTime.UtcNow.AddSeconds(tokens.ExpiresIn),
+        SessionAbsoluteExpiry = DateTime.UtcNow.AddHours(sessionHours),
+        RenewalBuffer = renewalBuffer
     };
-    tokenCache.Store(result.Email!, tokenData);
+    tokenCache.Store(email, tokenData);
 
-    // 2. Cookie only stores identity claims (Name, Email, Roles) - NO tokens
+    // Step 4: Cookie stores identity claims only — NO tokens
     var claims = new List<Claim>
     {
-        new(ClaimTypes.Name, result.Email!),
-        new(ClaimTypes.Email, result.Email!)
+        new(ClaimTypes.Name, email),
+        new(ClaimTypes.Email, email)
     };
-    claims.AddRange(result.Roles.Select(r => new Claim(ClaimTypes.Role, r)));
+    claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
 
     await context.SignInAsync(
         CookieAuthenticationDefaults.AuthenticationScheme,
@@ -146,10 +182,10 @@ app.MapPost("/Account/Login", async (
         new AuthenticationProperties
         {
             IsPersistent = true,
-            ExpiresUtc = DateTimeOffset.UtcNow.AddDays(7)
+            ExpiresUtc = DateTimeOffset.UtcNow.AddHours(sessionHours)
         });
 
-    Console.WriteLine($"[LOGIN] {email} - cookie set, redirecting to {returnUrl ?? "/"}");
+    Console.WriteLine($"[LOGIN] {email} SUCCESS, buffer={renewalBuffer.TotalSeconds:F0}s");
     return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl ?? "/");
 });
 
@@ -163,59 +199,51 @@ app.MapPost("/Account/Register", async (
     Console.WriteLine($"[REGISTER] {email}");
 
     var client = httpClientFactory.CreateClient("WebApi");
-    var response = await client.PostAsJsonAsync("api/auth/register", new { email, password, firstName, lastName });
+
+    // Call our custom register endpoint (assigns "User" role)
+    var response = await client.PostAsJsonAsync("api/auth/register",
+        new RegisterRequest { Email = email, Password = password, FirstName = firstName, LastName = lastName });
 
     if (response.IsSuccessStatusCode)
     {
-        var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
-        if (result?.Success == true)
-        {
-            Console.WriteLine($"[REGISTER] {email} - SUCCESS");
-            return Results.Redirect("/Account/Login?message=Registration+successful");
-        }
-
-        var errors = string.Join(", ", result?.Errors ?? ["Registration failed"]);
-        return Results.Redirect($"/Account/Register?error={Uri.EscapeDataString(errors)}");
+        Console.WriteLine($"[REGISTER] {email} SUCCESS");
+        return Results.Redirect("/Account/Login?message=Registration+successful");
     }
 
-    Console.WriteLine($"[REGISTER] {email} - FAILED");
+    // Try to extract error details
+    try
+    {
+        var errorBody = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"[REGISTER] {email} FAILED: {errorBody}");
+
+        // Try parse as our custom error format
+        var errorObj = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(errorBody);
+        if (errorObj.TryGetProperty("errors", out var errorsArr))
+        {
+            var errors = new List<string>();
+            foreach (var err in errorsArr.EnumerateArray())
+                errors.Add(err.GetString() ?? "Unknown error");
+            return Results.Redirect($"/Account/Register?error={Uri.EscapeDataString(string.Join(", ", errors))}");
+        }
+    }
+    catch { /* Fall through */ }
+
     return Results.Redirect("/Account/Register?error=Registration+failed");
 });
 
-app.MapPost("/Account/Logout", async (
-    HttpContext context,
-    IHttpClientFactory httpClientFactory,
-    TokenCacheService tokenCache) =>
+app.MapPost("/Account/Logout", async (HttpContext context, TokenCacheService tokenCache) =>
 {
     var email = context.User.Identity?.Name;
     Console.WriteLine($"[LOGOUT] {email}");
 
-    // Try to revoke tokens on backend
-    if (email != null)
-    {
-        var tokenData = tokenCache.Get(email);
-        if (tokenData != null)
-        {
-            try
-            {
-                var client = httpClientFactory.CreateClient("WebApi");
-                client.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenData.AccessToken);
-                _ = client.PostAsync("api/auth/logout", null);
-            }
-            catch { /* Don't block logout */ }
-        }
-
-        tokenCache.Remove(email);
-    }
+    if (email != null) tokenCache.Remove(email);
 
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    Console.WriteLine($"[LOGOUT] {email} - done");
     return Results.Redirect("/");
 });
 
 // =====================================================================
-//  BFF PROXY ENDPOINTS (for WASM components to call WebApi)
+//  BFF PROXY ENDPOINTS (for WASM components)
 // =====================================================================
 
 app.MapGet("/api/bff/me", async (HttpContext context, IAuthService authService) =>
@@ -223,24 +251,16 @@ app.MapGet("/api/bff/me", async (HttpContext context, IAuthService authService) 
     var email = context.User.Identity?.Name;
     if (email == null) return Results.Unauthorized();
 
-    Console.WriteLine($"[BFF] GET /api/bff/me for {email}");
     var userInfo = await authService.GetAsync<UserInfo>("api/auth/me");
-
-    if (userInfo == null)
-        return Results.StatusCode(502); // Gateway error - WebApi call failed
-
-    return Results.Ok(userInfo);
+    return userInfo != null ? Results.Ok(userInfo) : Results.StatusCode(502);
 }).RequireAuthorization();
 
-app.MapPost("/api/bff/refresh", async (HttpContext context, IAuthService authService) =>
+app.MapGet("/api/bff/token-status", (HttpContext context, IAuthService authService) =>
 {
     var email = context.User.Identity?.Name;
     if (email == null) return Results.Unauthorized();
 
-    Console.WriteLine($"[BFF] POST /api/bff/refresh for {email}");
-    var success = await authService.RefreshTokenAsync();
-
-    return success ? Results.Ok() : Results.StatusCode(502);
+    return Results.Ok(authService.GetTokenStatus());
 }).RequireAuthorization();
 
 app.Run();

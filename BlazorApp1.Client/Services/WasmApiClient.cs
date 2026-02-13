@@ -12,35 +12,29 @@ public class WasmApiClient : IApiClient
         _httpClient = httpClient;
     }
 
-    public async Task<UserInfo?> GetMyInfoAsync()
-    {
-        try
-        {
-            var response = await _httpClient.GetAsync("/api/bff/me");
-            if (response.IsSuccessStatusCode)
-                return await response.Content.ReadFromJsonAsync<UserInfo>();
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[WASM] GetMyInfoAsync: {ex.Message}");
-            return null;
-        }
-    }
+    // Adding a new method? Just copy this pattern:
+    //   public Task<List<OrderDto>?> GetOrdersAsync()
+    //       => GetAsync<List<OrderDto>>("/api/bff/orders");
 
-    public async Task<TokenStatusResponse?> GetTokenStatusAsync()
+    public Task<UserInfo?> GetMyInfoAsync()
+        => GetAsync<UserInfo>("/api/bff/me");
+
+    public Task<TokenStatusResponse?> GetTokenStatusAsync()
+        => GetAsync<TokenStatusResponse>("/api/bff/token-status");
+
+    private async Task<T?> GetAsync<T>(string path)
     {
         try
         {
-            var response = await _httpClient.GetAsync("/api/bff/token-status");
-            if (response.IsSuccessStatusCode)
-                return await response.Content.ReadFromJsonAsync<TokenStatusResponse>();
-            return null;
+            var response = await _httpClient.GetAsync(path);
+            return response.IsSuccessStatusCode
+                ? await response.Content.ReadFromJsonAsync<T>()
+                : default;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[WASM] GetTokenStatusAsync: {ex.Message}");
-            return null;
+            Console.WriteLine($"[WASM] GET {path}: {ex.Message}");
+            return default;
         }
     }
 }

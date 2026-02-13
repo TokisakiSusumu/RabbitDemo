@@ -10,15 +10,6 @@ public interface IAuthService
     TokenStatusResponse GetTokenStatus();
 }
 
-/// <summary>
-/// Makes authenticated API calls to WebApi using bearer token from TokenCacheService.
-/// 
-/// SLIDING SESSION RULES (unchanged from Step 1b):
-/// 1. Token valid + NOT in renewal window → use as-is
-/// 2. Token valid + IN renewal window → call Identity's /refresh, then use new token
-/// 3. Token expired → SESSION DEAD, return null
-/// 4. Session absolute expiry reached → SESSION DEAD
-/// </summary>
 public class AuthService : IAuthService
 {
     private readonly IHttpClientFactory _httpClientFactory;
@@ -84,10 +75,7 @@ public class AuthService : IAuthService
         Console.WriteLine($"[AUTH] GET {endpoint} → {(int)response.StatusCode}");
 
         if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-        {
-            Console.WriteLine($"[AUTH] GET {endpoint} → 401, session dead");
             return default;
-        }
 
         if (response.IsSuccessStatusCode)
             return await response.Content.ReadFromJsonAsync<T>();
@@ -114,23 +102,16 @@ public class AuthService : IAuthService
         return default;
     }
 
-    /// <summary>
-    /// Calls Identity's /api/identity/refresh endpoint with the stored refresh token.
-    /// </summary>
     private async Task<bool> TryRefreshTokenAsync()
     {
         var email = GetCurrentUserEmail();
         var tokenData = GetTokens();
 
-        if (email == null || tokenData == null)
-        {
-            Console.WriteLine("[AUTH] Refresh SKIP: no user/tokens");
-            return false;
-        }
+        if (email == null || tokenData == null) return false;
 
         if (tokenData.SessionAbsoluteExpiry <= DateTime.UtcNow)
         {
-            Console.WriteLine("[AUTH] Refresh BLOCKED: session absolute expiry reached");
+            Console.WriteLine("[AUTH] Refresh BLOCKED: session absolute expiry");
             _tokenCache.Remove(email);
             return false;
         }
@@ -140,8 +121,6 @@ public class AuthService : IAuthService
         try
         {
             var client = _httpClientFactory.CreateClient("WebApi");
-
-            // Call Identity's built-in /refresh endpoint
             var refreshRequest = new IdentityRefreshRequest { RefreshToken = tokenData.RefreshToken };
             var response = await client.PostAsJsonAsync("api/identity/refresh", refreshRequest);
 
@@ -154,26 +133,21 @@ public class AuthService : IAuthService
 
             var tokenResponse = await response.Content.ReadFromJsonAsync<IdentityTokenResponse>();
             if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.AccessToken))
-            {
-                Console.WriteLine("[AUTH] Refresh FAILED: empty response");
                 return false;
-            }
 
-            // Compute new expiry and renewal buffer
             var newExpiry = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn);
             var newRenewalBuffer = TimeSpan.FromSeconds(tokenResponse.ExpiresIn / 2.0);
 
-            var newTokenData = new TokenData
+            _tokenCache.Store(email, new TokenData
             {
                 AccessToken = tokenResponse.AccessToken,
                 RefreshToken = tokenResponse.RefreshToken,
                 AccessTokenExpiry = newExpiry,
-                SessionAbsoluteExpiry = tokenData.SessionAbsoluteExpiry, // preserve original
+                SessionAbsoluteExpiry = tokenData.SessionAbsoluteExpiry,
                 RenewalBuffer = newRenewalBuffer
-            };
+            });
 
-            _tokenCache.Store(email, newTokenData);
-            Console.WriteLine($"[AUTH] Refresh SUCCESS: new expiry {newExpiry:HH:mm:ss} UTC, buffer={newRenewalBuffer.TotalSeconds:F0}s");
+            Console.WriteLine($"[AUTH] Refresh SUCCESS: new expiry {newExpiry:HH:mm:ss} UTC");
             return true;
         }
         catch (Exception ex)
@@ -186,39 +160,32 @@ public class AuthService : IAuthService
     private async Task<HttpClient?> GetAuthenticatedClientAsync()
     {
         var tokenData = GetTokens();
-        if (tokenData == null)
-        {
-            Console.WriteLine("[AUTH] GetClient: no tokens");
-            return null;
-        }
+        if (tokenData == null) return null;
 
         var now = DateTime.UtcNow;
 
         if (tokenData.SessionAbsoluteExpiry <= now)
         {
             var email = GetCurrentUserEmail();
-            Console.WriteLine($"[AUTH] GetClient: SESSION EXPIRED for {email}");
             if (email != null) _tokenCache.Remove(email);
             return null;
         }
 
         var timeLeft = tokenData.AccessTokenExpiry - now;
 
-        // TOKEN EXPIRED → dead
         if (timeLeft <= TimeSpan.Zero)
         {
-            Console.WriteLine($"[AUTH] GetClient: TOKEN EXPIRED ({timeLeft.TotalSeconds:F0}s ago) — session dead");
+            Console.WriteLine("[AUTH] TOKEN EXPIRED — session dead");
             return null;
         }
 
-        // IN RENEWAL WINDOW → refresh
         if (timeLeft <= tokenData.RenewalBuffer)
         {
-            Console.WriteLine($"[AUTH] GetClient: renewal window ({timeLeft.TotalSeconds:F0}s left), refreshing...");
+            Console.WriteLine($"[AUTH] Renewal window ({timeLeft.TotalSeconds:F0}s left), refreshing...");
             if (await TryRefreshTokenAsync())
                 tokenData = GetTokens();
             else
-                Console.WriteLine("[AUTH] GetClient: refresh failed, using current token");
+                Console.WriteLine("[AUTH] Refresh failed, using current token");
         }
 
         var client = _httpClientFactory.CreateClient("WebApi");

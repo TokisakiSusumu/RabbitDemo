@@ -20,10 +20,13 @@ builder.Services.AddHttpClient("WebApi", client =>
     client.BaseAddress = new Uri("http://localhost:5100");
 });
 
-// Read session config (must match WebApi's AuthSettings)
 var maxSessionHours = builder.Configuration.GetValue("AuthSettings:MaxSessionHours", 24);
 
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+// =====================================================================
+//  Authentication: main cookie + external cookie + Microsoft
+// =====================================================================
+
+var authBuilder = builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
         options.LoginPath = "/Account/Login";
@@ -43,7 +46,6 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
                 }
 
                 var cache = context.HttpContext.RequestServices.GetRequiredService<TokenCacheService>();
-
                 if (!cache.HasTokens(email))
                 {
                     Console.WriteLine($"[COOKIE] No cached tokens for {email}, rejecting");
@@ -77,7 +79,29 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
                 return Task.CompletedTask;
             }
         };
+    })
+    // Temporary cookie for external auth flow (lives only during OAuth redirect)
+    .AddCookie("ExternalCookie", options =>
+    {
+        options.ExpireTimeSpan = TimeSpan.FromMinutes(5);
     });
+
+// Microsoft sign-in (optional: only enabled if config has ClientId)
+var msClientId = builder.Configuration["MicrosoftAuth:ClientId"];
+if (!string.IsNullOrEmpty(msClientId))
+{
+    authBuilder.AddMicrosoftAccount(options =>
+    {
+        options.SignInScheme = "ExternalCookie";
+        options.ClientId = msClientId;
+        options.ClientSecret = builder.Configuration["MicrosoftAuth:ClientSecret"]!;
+    });
+    Console.WriteLine("[STARTUP] Microsoft sign-in ENABLED");
+}
+else
+{
+    Console.WriteLine("[STARTUP] Microsoft sign-in DISABLED (no MicrosoftAuth:ClientId in config)");
+}
 
 builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
@@ -110,51 +134,17 @@ app.MapRazorComponents<App>()
     .AddAdditionalAssemblies(typeof(BlazorApp1.Client._Imports).Assembly);
 
 // =====================================================================
-//  AUTH ENDPOINTS
+//  Shared helper: store tokens + set cookie after any login flow
 // =====================================================================
 
-app.MapPost("/Account/Login", async (
+static async Task StoreTokensAndSignIn(
     HttpContext context,
-    IHttpClientFactory httpClientFactory,
     TokenCacheService tokenCache,
     IConfiguration config,
-    [FromForm] string email,
-    [FromForm] string password,
-    [FromForm] string? returnUrl = null) =>
+    IdentityTokenResponse tokens,
+    string email,
+    List<string> roles)
 {
-    Console.WriteLine($"[LOGIN] {email}");
-
-    var client = httpClientFactory.CreateClient("WebApi");
-
-    // Step 1: Call Identity's /login endpoint
-    var loginResponse = await client.PostAsJsonAsync("api/identity/login", new { email, password });
-
-    if (!loginResponse.IsSuccessStatusCode)
-    {
-        Console.WriteLine($"[LOGIN] {email} FAILED: {loginResponse.StatusCode}");
-        return Results.Redirect($"/Account/Login?error=Invalid+credentials&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
-    }
-
-    var tokens = await loginResponse.Content.ReadFromJsonAsync<IdentityTokenResponse>();
-    if (tokens == null || string.IsNullOrEmpty(tokens.AccessToken))
-    {
-        Console.WriteLine($"[LOGIN] {email} FAILED: empty token response");
-        return Results.Redirect($"/Account/Login?error=Login+failed&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
-    }
-
-    Console.WriteLine($"[LOGIN] {email} got tokens, expiresIn={tokens.ExpiresIn}s");
-
-    // Step 2: Call /api/auth/me to get user info + roles
-    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
-    var meResponse = await client.GetAsync("api/auth/me");
-    var userInfo = meResponse.IsSuccessStatusCode
-        ? await meResponse.Content.ReadFromJsonAsync<UserInfo>()
-        : null;
-
-    var roles = userInfo?.Roles ?? [];
-    Console.WriteLine($"[LOGIN] {email} roles=[{string.Join(",", roles)}]");
-
-    // Step 3: Store tokens in server-side cache
     var sessionHours = config.GetValue("AuthSettings:MaxSessionHours", 24);
     var renewalBuffer = TimeSpan.FromSeconds(tokens.ExpiresIn / 2.0);
 
@@ -168,7 +158,6 @@ app.MapPost("/Account/Login", async (
     };
     tokenCache.Store(email, tokenData);
 
-    // Step 4: Cookie stores identity claims only — NO tokens
     var claims = new List<Claim>
     {
         new(ClaimTypes.Name, email),
@@ -185,9 +174,53 @@ app.MapPost("/Account/Login", async (
             ExpiresUtc = DateTimeOffset.UtcNow.AddHours(sessionHours)
         });
 
-    Console.WriteLine($"[LOGIN] {email} SUCCESS, buffer={renewalBuffer.TotalSeconds:F0}s");
+    Console.WriteLine($"[AUTH] Stored tokens + cookie for {email}, buffer={renewalBuffer.TotalSeconds:F0}s");
+}
+
+// =====================================================================
+//  PASSWORD LOGIN
+// =====================================================================
+
+app.MapPost("/Account/Login", async (
+    HttpContext context,
+    IHttpClientFactory httpClientFactory,
+    TokenCacheService tokenCache,
+    IConfiguration config,
+    [FromForm] string email,
+    [FromForm] string password,
+    [FromForm] string? returnUrl = null) =>
+{
+    Console.WriteLine($"[LOGIN] {email}");
+
+    var client = httpClientFactory.CreateClient("WebApi");
+
+    var loginResponse = await client.PostAsJsonAsync("api/identity/login", new { email, password });
+    if (!loginResponse.IsSuccessStatusCode)
+    {
+        Console.WriteLine($"[LOGIN] {email} FAILED: {loginResponse.StatusCode}");
+        return Results.Redirect($"/Account/Login?error=Invalid+credentials&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
+    }
+
+    var tokens = await loginResponse.Content.ReadFromJsonAsync<IdentityTokenResponse>();
+    if (tokens == null || string.IsNullOrEmpty(tokens.AccessToken))
+        return Results.Redirect($"/Account/Login?error=Login+failed&returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}");
+
+    // Get roles
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+    var meResponse = await client.GetAsync("api/auth/me");
+    var userInfo = meResponse.IsSuccessStatusCode
+        ? await meResponse.Content.ReadFromJsonAsync<UserInfo>()
+        : null;
+
+    await StoreTokensAndSignIn(context, tokenCache, config, tokens, email, userInfo?.Roles ?? []);
+
+    Console.WriteLine($"[LOGIN] {email} SUCCESS");
     return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl ?? "/");
 });
+
+// =====================================================================
+//  REGISTRATION
+// =====================================================================
 
 app.MapPost("/Account/Register", async (
     IHttpClientFactory httpClientFactory,
@@ -199,8 +232,6 @@ app.MapPost("/Account/Register", async (
     Console.WriteLine($"[REGISTER] {email}");
 
     var client = httpClientFactory.CreateClient("WebApi");
-
-    // Call our custom register endpoint (assigns "User" role)
     var response = await client.PostAsJsonAsync("api/auth/register",
         new RegisterRequest { Email = email, Password = password, FirstName = firstName, LastName = lastName });
 
@@ -210,13 +241,10 @@ app.MapPost("/Account/Register", async (
         return Results.Redirect("/Account/Login?message=Registration+successful");
     }
 
-    // Try to extract error details
     try
     {
         var errorBody = await response.Content.ReadAsStringAsync();
         Console.WriteLine($"[REGISTER] {email} FAILED: {errorBody}");
-
-        // Try parse as our custom error format
         var errorObj = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(errorBody);
         if (errorObj.TryGetProperty("errors", out var errorsArr))
         {
@@ -226,10 +254,105 @@ app.MapPost("/Account/Register", async (
             return Results.Redirect($"/Account/Register?error={Uri.EscapeDataString(string.Join(", ", errors))}");
         }
     }
-    catch { /* Fall through */ }
+    catch { }
 
     return Results.Redirect("/Account/Register?error=Registration+failed");
 });
+
+// =====================================================================
+//  EXTERNAL LOGIN (Microsoft)
+// =====================================================================
+
+app.MapGet("/Account/ExternalLogin", (string provider, string? returnUrl, HttpContext context) =>
+{
+    Console.WriteLine($"[EXTERNAL-LOGIN] Challenge for {provider}");
+
+    var properties = new AuthenticationProperties
+    {
+        RedirectUri = $"/Account/ExternalLoginCallback?returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}"
+    };
+    properties.Items["LoginProvider"] = provider;
+
+    return TypedResults.Challenge(properties, [provider]);
+});
+
+app.MapGet("/Account/ExternalLoginCallback", async (
+    HttpContext context,
+    IHttpClientFactory httpClientFactory,
+    TokenCacheService tokenCache,
+    IConfiguration config,
+    string? returnUrl = null) =>
+{
+    Console.WriteLine("[EXTERNAL-CALLBACK] Processing...");
+
+    // Step 1: Read the external cookie (set by Microsoft auth middleware)
+    var result = await context.AuthenticateAsync("ExternalCookie");
+    if (!result.Succeeded || result.Principal == null)
+    {
+        Console.WriteLine("[EXTERNAL-CALLBACK] FAILED: no external principal");
+        return Results.Redirect("/Account/Login?error=External+login+failed");
+    }
+
+    // Step 2: Extract claims from Microsoft identity
+    var providerUserId = result.Principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? "";
+    var email = result.Principal.FindFirstValue(ClaimTypes.Email) ?? "";
+    var firstName = result.Principal.FindFirstValue(ClaimTypes.GivenName);
+    var lastName = result.Principal.FindFirstValue(ClaimTypes.Surname);
+    var provider = result.Properties?.Items["LoginProvider"] ?? "Microsoft";
+
+    Console.WriteLine($"[EXTERNAL-CALLBACK] {provider}: {email} (id={providerUserId})");
+
+    if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(providerUserId))
+    {
+        Console.WriteLine("[EXTERNAL-CALLBACK] FAILED: missing email or provider ID");
+        return Results.Redirect("/Account/Login?error=Could+not+get+email+from+Microsoft");
+    }
+
+    // Step 3: Call WebApi to create/link user and get bearer tokens
+    var client = httpClientFactory.CreateClient("WebApi");
+    var externalResponse = await client.PostAsJsonAsync("api/auth/external-login", new ExternalLoginRequest
+    {
+        Provider = provider,
+        ProviderUserId = providerUserId,
+        Email = email,
+        FirstName = firstName,
+        LastName = lastName
+    });
+
+    if (!externalResponse.IsSuccessStatusCode)
+    {
+        var error = await externalResponse.Content.ReadAsStringAsync();
+        Console.WriteLine($"[EXTERNAL-CALLBACK] WebApi FAILED: {error}");
+        return Results.Redirect("/Account/Login?error=External+login+failed");
+    }
+
+    var tokens = await externalResponse.Content.ReadFromJsonAsync<IdentityTokenResponse>();
+    if (tokens == null || string.IsNullOrEmpty(tokens.AccessToken))
+    {
+        Console.WriteLine("[EXTERNAL-CALLBACK] FAILED: empty token response");
+        return Results.Redirect("/Account/Login?error=External+login+failed");
+    }
+
+    // Step 4: Get roles from /api/auth/me
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+    var meResponse = await client.GetAsync("api/auth/me");
+    var userInfo = meResponse.IsSuccessStatusCode
+        ? await meResponse.Content.ReadFromJsonAsync<UserInfo>()
+        : null;
+
+    // Step 5: Store tokens + sign in with main cookie
+    await StoreTokensAndSignIn(context, tokenCache, config, tokens, email, userInfo?.Roles ?? []);
+
+    // Step 6: Clean up external cookie
+    await context.SignOutAsync("ExternalCookie");
+
+    Console.WriteLine($"[EXTERNAL-CALLBACK] {email} SUCCESS via {provider}");
+    return Results.Redirect(string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl ?? "/");
+});
+
+// =====================================================================
+//  LOGOUT
+// =====================================================================
 
 app.MapPost("/Account/Logout", async (HttpContext context, TokenCacheService tokenCache) =>
 {
@@ -243,7 +366,7 @@ app.MapPost("/Account/Logout", async (HttpContext context, TokenCacheService tok
 });
 
 // =====================================================================
-//  BFF PROXY ENDPOINTS (for WASM components)
+//  BFF PROXY ENDPOINTS
 // =====================================================================
 
 app.MapGet("/api/bff/me", async (HttpContext context, IAuthService authService) =>

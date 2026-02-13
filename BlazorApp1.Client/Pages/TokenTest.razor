@@ -15,7 +15,7 @@
 <div class="alert alert-secondary mb-3">
     <strong>Render:</strong> <span class="badge bg-info">@_renderLocation</span>
     — Token: 30s, renewal window: last 15s.
-    <strong>Auto-redirect</strong> is active — when token expires, you'll be sent to login automatically.
+    When expired, clicking <strong>"Call API"</strong> redirects to login.
 </div>
 
 @* ===== STATUS CARD ===== *@
@@ -52,7 +52,7 @@
                         <span class="badge bg-danger fs-6">EXPIRED</span>
                         <br />
 
-                        <small class="text-danger">Auto-redirect in a moment...</small>
+                        <small class="text-danger">Next API call will redirect to login</small>
                     }
                     else
                     {
@@ -98,7 +98,7 @@
 
 @* ===== API TEST ===== *@
 <div class="card mb-3">
-    <div class="card-header"><strong>🧪 API Test</strong> — triggers renewal if in window</div>
+    <div class="card-header"><strong>🧪 API Test</strong> — triggers renewal if in window, redirects to login if expired</div>
     <div class="card-body">
         <button class="btn btn-primary btn-lg" @onclick="FetchUserInfo" disabled="@_loading">
             @if (_loading)
@@ -166,6 +166,7 @@
         _renderLocation = OperatingSystem.IsBrowser() ? "WebAssembly" : "Server";
         Log($"Page loaded in {_renderLocation} mode");
 
+        // Passive polling — only updates the countdown display, never redirects
         _timer = new Timer(async _ =>
         {
             try
@@ -173,22 +174,16 @@
                 await InvokeAsync(async () =>
                 {
                     var newStatus = await ApiClient.GetTokenStatusAsync();
+                    if (newStatus == null) return; // silently ignore
 
-                    if (newStatus == null || !newStatus.HasTokenData)
-                    {
-                        Log("⚠️ No token data — SessionWatcher will redirect shortly");
-                        _status = newStatus;
-                        StateHasChanged();
-                        return;
-                    }
-
+                    // Detect if token was renewed (expiry moved forward)
                     if (_lastKnownExpiry.HasValue && newStatus.AccessTokenExpiry.HasValue
                         && newStatus.AccessTokenExpiry > _lastKnownExpiry)
                     {
                         _lastKnownExpiry = newStatus.AccessTokenExpiry;
                     }
 
-                    if (!newStatus.IsAccessTokenExpired)
+                    if (newStatus.HasTokenData && !newStatus.IsAccessTokenExpired)
                         _lastKnownExpiry = newStatus.AccessTokenExpiry;
 
                     _status = newStatus;
@@ -211,6 +206,7 @@
 
         try
         {
+            // This call will auto-redirect to login if session is expired
             var info = await ApiClient.GetMyInfoAsync();
             _apiTime = DateTime.UtcNow;
             _apiSuccess = info != null;
@@ -220,6 +216,7 @@
                 _apiResult = $"{info.Email} — roles: [{string.Join(", ", info.Roles)}]";
                 Log($"✅ API SUCCESS: {info.Email}");
 
+                // Check if token was renewed during this call
                 var statusAfter = await ApiClient.GetTokenStatusAsync();
                 if (statusAfter?.AccessTokenExpiry != null && expiryBefore != null
                     && statusAfter.AccessTokenExpiry > expiryBefore)
@@ -234,7 +231,7 @@
             else
             {
                 _apiResult = "No data — session may be expired";
-                Log("❌ API FAILED: null response");
+                Log("❌ API FAILED: null response (if expired, redirect is in progress...)");
             }
         }
         catch (Exception ex)

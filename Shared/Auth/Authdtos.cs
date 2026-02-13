@@ -1,6 +1,6 @@
 namespace Shared.Auth;
 
-// ===== Custom DTOs (for our custom endpoints) =====
+// ===== Custom DTOs =====
 
 public record RegisterRequest
 {
@@ -18,12 +18,21 @@ public record UserInfo
     public List<string> Roles { get; init; } = [];
 }
 
+/// <summary>
+/// Sent by BlazorApp1 to WebApi after external OAuth completes.
+/// WebApi creates/links the user and returns bearer tokens.
+/// </summary>
+public record ExternalLoginRequest
+{
+    public string Provider { get; init; } = string.Empty;
+    public string ProviderUserId { get; init; } = string.Empty;
+    public string Email { get; init; } = string.Empty;
+    public string? FirstName { get; init; }
+    public string? LastName { get; init; }
+}
+
 // ===== Identity API response DTOs =====
 
-/// <summary>
-/// Response from MapIdentityApi /login and /refresh endpoints.
-/// Format: { "tokenType":"Bearer", "accessToken":"...", "expiresIn":30, "refreshToken":"..." }
-/// </summary>
 public record IdentityTokenResponse
 {
     public string TokenType { get; init; } = string.Empty;
@@ -32,30 +41,13 @@ public record IdentityTokenResponse
     public string RefreshToken { get; init; } = string.Empty;
 }
 
-/// <summary>
-/// Request for Identity's /refresh endpoint.
-/// </summary>
 public record IdentityRefreshRequest
 {
     public string RefreshToken { get; init; } = string.Empty;
 }
 
-/// <summary>
-/// Identity register error response (400).
-/// </summary>
-public record IdentityErrorResponse
-{
-    public string? Title { get; init; }
-    public int Status { get; init; }
-    public Dictionary<string, string[]>? Errors { get; init; }
-}
-
 // ===== Server-side only =====
 
-/// <summary>
-/// Stored in TokenCacheService. Contains both tokens.
-/// The refresh token is managed by Identity (no custom DB table).
-/// </summary>
 public record TokenData
 {
     public string AccessToken { get; init; } = string.Empty;
@@ -65,10 +57,6 @@ public record TokenData
     public TimeSpan RenewalBuffer { get; init; }
 }
 
-/// <summary>
-/// Returned by the BFF /api/bff/token-status endpoint.
-/// Used by TokenTest page and SessionWatcher in both render modes.
-/// </summary>
 public record TokenStatusResponse
 {
     public bool HasTokenData { get; init; }

@@ -4,18 +4,18 @@
 
 <h1>Blazor Auth Demo</h1>
 
-<p>Sliding session with ASP.NET Identity API endpoints (MapIdentityApi).</p>
+<p>Sliding session with ASP.NET Identity API + Microsoft sign-in.</p>
 
 <div class="card mt-3" style="max-width:500px;">
     <div class="card-body">
         <h5>Quick Start</h5>
         <ol>
-            <li><a href="Account/Register">Register</a> an account</li>
+            <li><a href="Account/Register">Register</a> an account (or use Microsoft sign-in)</li>
             <li><a href="Account/Login">Login</a> with your credentials</li>
             <li>Open <a href="token-test">Session Test</a> to watch the token lifecycle</li>
         </ol>
         <p class="text-muted mb-0">
-            <small>Session auto-expires after inactivity. You'll be redirected to login automatically.</small>
+            <small>When your session expires and you try to interact, you'll be redirected to login.</small>
         </p>
     </div>
 </div>

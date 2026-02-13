@@ -7,13 +7,9 @@ using WebApi.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Identity with built-in API endpoints (replaces our custom AuthController + TokenService)
-// This gives us: /login, /refresh, /register (built-in), /manage/* endpoints
-// And sets up bearer token authentication automatically
 builder.Services
     .AddIdentityApiEndpoints<ApplicationUser>(options =>
     {
@@ -26,7 +22,6 @@ builder.Services
     .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<ApplicationDbContext>();
 
-// Configure bearer token lifetimes (replaces our custom JwtSettings)
 var tokenLifetimeSeconds = builder.Configuration.GetValue("AuthSettings:TokenLifetimeSeconds", 3600);
 var maxSessionHours = builder.Configuration.GetValue("AuthSettings:MaxSessionHours", 24);
 
@@ -40,7 +35,6 @@ builder.Services.Configure<BearerTokenOptions>(IdentityConstants.BearerScheme, o
 
 builder.Services.AddAuthorization();
 
-// CORS for Blazor app
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("BlazorApp", policy =>
@@ -70,17 +64,15 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // =====================================================================
-//  Identity API endpoints (built-in login, refresh, etc.)
-//  Maps: POST /api/identity/login, POST /api/identity/refresh, etc.
+//  Identity API endpoints (login, refresh, etc.)
 // =====================================================================
 app.MapGroup("/api/identity").MapIdentityApi<ApplicationUser>();
 
 // =====================================================================
-//  Custom endpoints (register with role + user info with roles)
+//  Custom endpoints
 // =====================================================================
 
-// Custom register: creates user AND assigns "User" role
-// (MapIdentityApi's built-in /register doesn't assign roles)
+// Register with role assignment
 app.MapPost("/api/auth/register", async (
     RegisterRequest request,
     UserManager<ApplicationUser> userManager) =>
@@ -104,22 +96,77 @@ app.MapPost("/api/auth/register", async (
     }
 
     await userManager.AddToRoleAsync(user, "User");
-    Console.WriteLine($">>> [WEBAPI] Register SUCCESS: {request.Email} (assigned 'User' role)");
-
+    Console.WriteLine($">>> [WEBAPI] Register SUCCESS: {request.Email}");
     return Results.Ok(new { success = true, email = user.Email });
 });
 
-// User info with roles (MapIdentityApi's /manage/info doesn't include roles conveniently)
+// External login: creates/links user from external provider, returns bearer tokens
+// Called by BlazorApp1 BFF after Microsoft OAuth callback
+app.MapPost("/api/auth/external-login", async (
+    ExternalLoginRequest request,
+    UserManager<ApplicationUser> userManager,
+    SignInManager<ApplicationUser> signInManager) =>
+{
+    Console.WriteLine($">>> [WEBAPI] ExternalLogin: {request.Provider} / {request.Email}");
+
+    // Step 1: Find user by external login
+    var user = await userManager.FindByLoginAsync(request.Provider, request.ProviderUserId);
+
+    if (user == null)
+    {
+        // Step 2: Try find by email (user may have registered with password first)
+        user = await userManager.FindByEmailAsync(request.Email);
+
+        if (user == null)
+        {
+            // Step 3: Create new user
+            user = new ApplicationUser
+            {
+                UserName = request.Email,
+                Email = request.Email,
+                EmailConfirmed = true, // Microsoft already verified the email
+                FirstName = request.FirstName,
+                LastName = request.LastName
+            };
+
+            var createResult = await userManager.CreateAsync(user);
+            if (!createResult.Succeeded)
+            {
+                var errors = createResult.Errors.Select(e => e.Description).ToList();
+                Console.WriteLine($">>> [WEBAPI] ExternalLogin CREATE FAILED: {string.Join(", ", errors)}");
+                return Results.BadRequest(new { errors });
+            }
+
+            await userManager.AddToRoleAsync(user, "User");
+            Console.WriteLine($">>> [WEBAPI] ExternalLogin: Created user {request.Email}");
+        }
+
+        // Link external login to user
+        var loginInfo = new UserLoginInfo(request.Provider, request.ProviderUserId, request.Provider);
+        var linkResult = await userManager.AddLoginAsync(user, loginInfo);
+        if (!linkResult.Succeeded)
+        {
+            Console.WriteLine($">>> [WEBAPI] ExternalLogin LINK FAILED: {string.Join(", ", linkResult.Errors.Select(e => e.Description))}");
+            // Non-fatal: user exists, login linked might already exist
+        }
+    }
+
+    Console.WriteLine($">>> [WEBAPI] ExternalLogin: Signing in {user.Email}");
+
+    // Step 4: Generate bearer token using Identity's mechanism
+    // This returns the same format as /api/identity/login
+    var principal = await signInManager.CreateUserPrincipalAsync(user);
+    return TypedResults.SignIn(principal, authenticationScheme: IdentityConstants.BearerScheme);
+});
+
+// User info with roles
 app.MapGet("/api/auth/me", async (
     HttpContext context,
     UserManager<ApplicationUser> userManager) =>
 {
     var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
     if (string.IsNullOrEmpty(userId))
-    {
-        Console.WriteLine(">>> [WEBAPI] GetMe: no user ID in token");
         return Results.Unauthorized();
-    }
 
     var user = await userManager.FindByIdAsync(userId);
     if (user == null) return Results.NotFound();

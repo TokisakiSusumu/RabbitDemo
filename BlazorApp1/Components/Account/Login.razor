@@ -1,4 +1,4 @@
-@page "/Account/Login"
+﻿@page "/Account/Login"
 
 <PageTitle>Login</PageTitle>
 
@@ -31,6 +31,16 @@
 
             <button type="submit" class="btn btn-primary">Login</button>
         </form>
+
+        <hr />
+
+        <div class="mt-3">
+            <h6>Or sign in with</h6>
+            <a href="/Account/ExternalLogin?provider=Microsoft&returnUrl=@Uri.EscapeDataString(ReturnUrl ?? "/")"
+               class="btn btn-outline-primary">
+                🪟 Sign in with Microsoft
+            </a>
+        </div>
 
         <p class="mt-3">
             Don't have an account? <a href="Account/Register">Register here</a>

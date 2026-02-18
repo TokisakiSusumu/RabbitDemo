@@ -1,0 +1,16 @@
+﻿@page "/Account/AccessDenied"
+
+<PageTitle>Access Denied</PageTitle>
+
+<div class="row">
+    <div class="col-md-6">
+        <h1>🚫 Access Denied</h1>
+        <p>You don't have permission to access this page.</p>
+        <a href="/" class="btn btn-primary">Back to Home</a>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+}

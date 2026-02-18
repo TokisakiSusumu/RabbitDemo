@@ -70,3 +70,15 @@ public record TokenStatusResponse
     public bool IsInRenewalWindow { get; init; }
     public bool IsSessionExpired { get; init; }
 }
+
+public class UserAuthData
+{
+    public bool IsAuthenticated { get; set; }
+    public List<ClaimData> Claims { get; set; } = [];
+}
+
+public class ClaimData
+{
+    public string Type { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+}

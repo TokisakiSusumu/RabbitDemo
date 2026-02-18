@@ -95,6 +95,9 @@ if (!string.IsNullOrEmpty(msClientId))
         options.SignInScheme = "ExternalCookie";
         options.ClientId = msClientId;
         options.ClientSecret = builder.Configuration["MicrosoftAuth:ClientSecret"]!;
+        // /common = org + personal, /consumers = personal only, /organizations = org only
+        options.AuthorizationEndpoint = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize";
+        options.TokenEndpoint = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token";
     });
     Console.WriteLine("[STARTUP] Microsoft sign-in ENABLED");
 }
@@ -380,10 +383,20 @@ app.MapGet("/api/bff/me", async (HttpContext context, IAuthService authService) 
 
 app.MapGet("/api/bff/token-status", (HttpContext context, IAuthService authService) =>
 {
-    var email = context.User.Identity?.Name;
-    if (email == null) return Results.Unauthorized();
+    // No .RequireAuthorization() — must return JSON even when cookie is rejected,
+    // otherwise the cookie middleware returns 302 → WASM HttpClient follows redirect
+    // → gets 200 HTML → JSON parse fails → auth state never updates.
+    if (context.User.Identity?.IsAuthenticated != true)
+    {
+        return Results.Ok(new TokenStatusResponse
+        {
+            HasTokenData = false,
+            ServerTimeUtc = DateTime.UtcNow
+        });
+    }
 
     return Results.Ok(authService.GetTokenStatus());
-}).RequireAuthorization();
+});
+// ↑ NO .RequireAuthorization() here
 
 app.Run();

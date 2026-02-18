@@ -4,11 +4,17 @@ using Microsoft.EntityFrameworkCore;
 using Shared.Auth;
 using System.Security.Claims;
 using WebApi.Data;
+using WebApi.DatabaseAuditInterceptor;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<ApplicationDbContext>((sp, options) => 
+{
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"));
+    var interceptor = sp.GetService<AuditInterceptor>();
+    if (interceptor is not null)
+        options.AddInterceptors(interceptor);
+});
 
 builder.Services
     .AddIdentityApiEndpoints<ApplicationUser>(options =>
@@ -45,7 +51,13 @@ builder.Services.AddCors(options =>
               .AllowCredentials();
     });
 });
-
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    // Resolves the 'RegisterRequest' collision by using full class names in the schema
+    options.CustomSchemaIds(type => type.FullName);
+});
 var app = builder.Build();
 
 // Seed roles
@@ -58,8 +70,14 @@ using (var scope = app.Services.CreateScope())
             await roleManager.CreateAsync(new IdentityRole(role));
     }
 }
-
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 app.UseCors("BlazorApp");
+app.UseHttpsRedirection();
+app.MapControllers();
 app.UseAuthentication();
 app.UseAuthorization();
 

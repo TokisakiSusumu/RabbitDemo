@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server;
 using Microsoft.AspNetCore.Components.Web;
+using Shared.Auth;
 using System.Diagnostics;
 using System.Security.Claims;
 
@@ -81,19 +82,4 @@ public class PersistingAuthStateProvider : ServerAuthenticationStateProvider, ID
         _subscription.Dispose();
         AuthenticationStateChanged -= OnAuthenticationStateChanged;
     }
-}
-
-/// <summary>
-/// Data structure for persisting auth state between server and WASM
-/// </summary>
-public class UserAuthData
-{
-    public bool IsAuthenticated { get; set; }
-    public List<ClaimData> Claims { get; set; } = [];
-}
-
-public class ClaimData
-{
-    public string Type { get; set; } = string.Empty;
-    public string Value { get; set; } = string.Empty;
 }

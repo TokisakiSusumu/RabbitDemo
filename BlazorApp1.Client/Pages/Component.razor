@@ -1,0 +1,9 @@
+﻿@page "/admin"
+@rendermode InteractiveAuto
+@attribute [Authorize(Roles = "Admin")]
+@using Microsoft.AspNetCore.Authorization
+
+<PageTitle>Admin</PageTitle>
+
+<h1>Admin Dashboard</h1>
+<p>If you can see this, role-based auth is working.</p>

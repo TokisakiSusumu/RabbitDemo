@@ -1,11 +1,38 @@
 @page "/Account/SignOut"
+@inject NavigationManager Navigation
 
 <PageTitle>Logout</PageTitle>
 
-<h1>Logout</h1>
+<AuthorizeView>
+    <Authorized>
+        <h1>Logout</h1>
+        <form method="post" action="Account/Logout">
+            <AntiforgeryToken />
+            <p>Click the button to log out.</p>
+            <button type="submit" class="btn btn-primary">Logout</button>
+        </form>
+    </Authorized>
+    <NotAuthorized>
+        <p>Redirecting to login...</p>
+    </NotAuthorized>
+</AuthorizeView>
 
-<form method="post" action="/Account/Logout">
-    <AntiforgeryToken />
-    <p>Click the button to log out.</p>
-    <button type="submit" class="btn btn-primary">Logout</button>
-</form>
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState != null)
+        {
+            var authState = await AuthState;
+            var user = authState.User;
+
+            if (!user.Identity?.IsAuthenticated ?? true)
+            {
+                // Move the navigation here
+                Navigation.NavigateTo("Account/Login", forceLoad: true);
+            }
+        }
+    }
+}
